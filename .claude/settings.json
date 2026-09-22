@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(sort -t'│' -k2 -h)",
+      "Bash(awk '{print $5, $9}')"
+    ]
+  }
+}

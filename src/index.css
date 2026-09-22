@@ -1,0 +1,360 @@
+@import 'tailwindcss';
+
+/* Class-based dark mode: <html class="dark"> toggles the `dark:` variant. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/*
+ * ChatBot Console — brand design system.
+ * Palette sourced from the project identity board:
+ *   amber   #E5A23C  primary accent      pale gold #F2D785  highlight
+ *   cream   #F6F2E9  light surface        navy      #16202E  dark base / sidebar
+ *   steel   #3E7CB1  secondary accent
+ */
+@theme {
+  /* Brand amber (primary) */
+  --color-brand-50: #fdf6e9;
+  --color-brand-100: #f9e8c4;
+  --color-brand-200: #f2d785;
+  --color-brand-300: #ecc05a;
+  --color-brand-400: #e8b049;
+  --color-brand-500: #e5a23c;
+  --color-brand-600: #c9842a;
+  --color-brand-700: #a3661f;
+  --color-brand-800: #7c4d1c;
+  --color-brand-900: #5f3c1a;
+
+  /* Navy (dark surfaces / sidebar) */
+  --color-navy-50: #eef1f5;
+  --color-navy-100: #d4dae3;
+  --color-navy-200: #aab6c6;
+  --color-navy-300: #758499;
+  --color-navy-400: #46566c;
+  --color-navy-500: #2a3a50;
+  --color-navy-600: #1f2c3e;
+  --color-navy-700: #1a2436;
+  --color-navy-800: #16202e;
+  --color-navy-900: #0f1722;
+
+  /* Steel blue (secondary accent / info) */
+  --color-steel-300: #8fb6d8;
+  --color-steel-400: #5f97c4;
+  --color-steel-500: #3e7cb1;
+  --color-steel-600: #336690;
+
+  /* Cream neutrals (light surfaces) */
+  --color-cream-50: #fbf9f4;
+  --color-cream-100: #f6f2e9;
+  --color-cream-200: #ece5d5;
+
+  /* Semantic */
+  --color-success: #3f9d5a;
+  --color-warning: #e8b049;
+  --color-danger: #d6584f;
+
+  /* Theme-aware surfaces / text — resolve to runtime vars in :root / .dark */
+  --color-bg: var(--app-bg);
+  --color-surface: var(--app-surface);
+  --color-surface2: var(--app-surface-2);
+  --color-border: var(--app-border);
+  --color-fg: var(--app-fg);
+  --color-muted: var(--app-muted);
+  --color-faint: var(--app-faint);
+
+  --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto,
+    'Helvetica Neue', Arial, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+
+  --radius-card: 0.75rem;
+}
+
+/* Light theme (default) — values match the original palette exactly */
+:root {
+  --app-bg: #f6f2e9; /* cream-100 */
+  --app-surface: #ffffff;
+  --app-surface-2: #fbf9f4; /* cream-50 */
+  --app-border: #d4dae3; /* navy-100 */
+  --app-fg: #16202e; /* navy-800 */
+  --app-muted: #46566c; /* navy-400 */
+  --app-faint: #758499; /* navy-300 */
+}
+
+/* Dark theme */
+.dark {
+  --app-bg: #0f1722; /* navy-900 */
+  --app-surface: #16202e; /* navy-800 */
+  --app-surface-2: #1a2436; /* navy-700 */
+  --app-border: #283546;
+  --app-fg: #f1ece0;
+  --app-muted: #9aa8ba;
+  --app-faint: #6b7c92;
+}
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    @apply bg-bg text-fg font-sans antialiased;
+  }
+
+  /* Arabic reads better with a touch more line height */
+  html[lang='ar'] body {
+    line-height: 1.7;
+  }
+
+  *:focus-visible {
+    @apply outline-none ring-2 ring-brand-400 ring-offset-2;
+    --tw-ring-offset-color: var(--app-bg);
+  }
+
+  /* Slim scrollbars to match the palette */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--app-border);
+    border-radius: 9999px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--app-faint);
+    background-clip: content-box;
+  }
+}
+
+/* --- Chat animations --------------------------------------------------- */
+@keyframes msg-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.animate-msg-in {
+  animation: msg-in 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes dot-bounce {
+  0%,
+  80%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.5;
+  }
+  40% {
+    transform: translateY(-4px);
+    opacity: 1;
+  }
+}
+.animate-dot {
+  animation: dot-bounce 1.2s infinite ease-in-out;
+}
+
+/* Drifting aurora blobs for the chat background */
+@keyframes blob {
+  0%,
+  100% {
+    transform: translate(0, 0) scale(1);
+  }
+  33% {
+    transform: translate(24px, -18px) scale(1.12);
+  }
+  66% {
+    transform: translate(-18px, 16px) scale(0.92);
+  }
+}
+.animate-blob {
+  animation: blob 16s ease-in-out infinite;
+}
+
+/* Glowing halo pulse (for the AI avatar ring) */
+@keyframes glow-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.95;
+    transform: scale(1.12);
+  }
+}
+.animate-glow {
+  animation: glow-pulse 2.2s ease-in-out infinite;
+}
+
+/* Slow rotation for conic gradient rings */
+@keyframes spin-slow {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.animate-spin-slow {
+  animation: spin-slow 4.5s linear infinite;
+}
+
+/* Drifting particle */
+@keyframes particle {
+  0%,
+  100% {
+    transform: translate(0, 0);
+    opacity: 0.5;
+  }
+  50% {
+    transform: translate(6px, -14px);
+    opacity: 1;
+  }
+}
+.animate-particle {
+  animation: particle 7s ease-in-out infinite;
+}
+
+/* Gentle vertical bob */
+@keyframes float-y {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-7px);
+  }
+}
+.animate-float-y {
+  animation: float-y 3.6s ease-in-out infinite;
+}
+
+/* --- Marketing site ---------------------------------------------------- */
+/* Faint blueprint grid for the hero */
+.mk-grid {
+  background-image:
+    linear-gradient(to right, rgba(143, 182, 216, 0.07) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(143, 182, 216, 0.07) 1px, transparent 1px);
+  background-size: 44px 44px;
+  mask-image: radial-gradient(ellipse 90% 70% at 50% 30%, black 40%, transparent 100%);
+}
+
+/* Amber → gold gradient headline text */
+.mk-text-gradient {
+  background: linear-gradient(100deg, #f2d785 0%, #e5a23c 45%, #e8b049 70%, #f2d785 100%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: shimmer 6s linear infinite;
+}
+
+/* Infinite capability ticker (content is duplicated once, so -50% loops) */
+@keyframes mk-marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+.animate-mk-marquee {
+  animation: mk-marquee 28s linear infinite;
+}
+.animate-mk-marquee:hover {
+  animation-play-state: paused;
+}
+
+/* Twinkling hero particle */
+@keyframes mk-twinkle {
+  0%,
+  100% {
+    opacity: 0.15;
+    transform: translateY(0) scale(0.8);
+  }
+  50% {
+    opacity: 0.9;
+    transform: translateY(-14px) scale(1.15);
+  }
+}
+.animate-mk-twinkle {
+  animation: mk-twinkle 5s ease-in-out infinite;
+}
+
+/* Satellite dot orbiting the chat mockup */
+@keyframes mk-orbit {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.animate-mk-orbit {
+  animation: mk-orbit 14s linear infinite;
+}
+
+/* Light beam sweeping along a divider line */
+@keyframes mk-beam {
+  0% {
+    transform: translateX(-150%);
+  }
+  100% {
+    transform: translateX(250%);
+  }
+}
+.animate-mk-beam {
+  animation: mk-beam 3.4s ease-in-out infinite;
+}
+
+/* Soft breathing glow for accents */
+@keyframes mk-breathe {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 0.8;
+  }
+}
+.animate-mk-breathe {
+  animation: mk-breathe 4s ease-in-out infinite;
+}
+
+/* Accessibility: kill decorative motion when the user asks for less */
+@media (prefers-reduced-motion: reduce) {
+  .animate-mk-marquee,
+  .animate-mk-twinkle,
+  .animate-mk-orbit,
+  .animate-mk-beam,
+  .animate-mk-breathe,
+  .animate-blob,
+  .animate-float-y,
+  .animate-spin-slow,
+  .animate-glow {
+    animation: none;
+  }
+}
+
+/* Shimmering "thinking" text */
+@keyframes shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+.animate-shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--color-navy-300) 0%,
+    var(--color-navy-300) 35%,
+    var(--color-brand-500) 50%,
+    var(--color-navy-300) 65%,
+    var(--color-navy-300) 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: shimmer 2s linear infinite;
+}
