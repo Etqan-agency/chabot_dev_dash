@@ -77,7 +77,7 @@ export interface Document {
   updated_at: ISODateString
 }
 
-/** GET /documents/{id}/content/ — every chunk joined into one read-only block. */
+/** A source flattened for the screens here — see `SourcePage` for the wire shape. */
 export interface DocumentContent {
   id: UUID
   filename: string
@@ -86,7 +86,7 @@ export interface DocumentContent {
   chunk_count: number
   char_count: number
   content: string
-  /** Present on PUT /documents/{id}/content/ — pieces created by the re-chunk. */
+  /** Pieces the text was (re-)chunked into on the last save. */
   chunks_created?: number
 }
 
@@ -370,7 +370,68 @@ export interface KnowledgeChunk {
   updated_at: ISODateString
 }
 
-/** One document inside GET /knowledge-chunks/full/ — its full joined text. */
+/** One row of GET /knowledge/sources/ — a source you can open as a page. */
+export interface KnowledgeSource {
+  id: UUID
+  filename: string
+  source_type: DocumentSourceType
+  api_url: string
+  is_active: boolean
+  processing_status: ProcessingStatus
+  section_count: number
+  edited_count: number
+  char_count: number
+  created_at: ISODateString
+  updated_at: ISODateString
+}
+
+/**
+ * GET /knowledge/sources/ — the sources grouped by origin. All three keys are
+ * always present, empty or not, so a tab per type never reads undefined.
+ */
+export interface KnowledgeSources {
+  sources: Record<DocumentSourceType, KnowledgeSource[]>
+  totals: Record<DocumentSourceType, { documents: number; sections: number; chars: number }>
+}
+
+/** One piece of a source, as GET /knowledge/sources/{id}/ returns it. */
+export interface SourceSection {
+  id: UUID
+  position: number
+  content: string
+  /** How many opening characters merely repeat the previous section. */
+  lead: number
+  char_count: number
+  source_id: string
+  edited_at: ISODateString | null
+  was_edited: boolean
+  manually_added: boolean
+}
+
+/**
+ * GET/PUT /knowledge/sources/{id}/ — one source as a page. `content` is the
+ * whole text with the chunker's repeats already removed; `sections` is only for
+ * an audit view that edits a single piece via /knowledge/{id}/.
+ */
+export interface SourcePage {
+  document: {
+    id: UUID
+    filename: string
+    source_type: DocumentSourceType
+    api_url: string
+    is_active: boolean
+    processing_status: ProcessingStatus
+    created_at: ISODateString
+    updated_at: ISODateString
+  }
+  content: string
+  char_count: number
+  section_count: number
+  edited_count: number
+  sections: SourceSection[]
+}
+
+/** One document inside GET /knowledge/full/ — its full joined text. */
 export interface FullKnowledgeDocument {
   id: UUID
   filename: string
@@ -380,7 +441,7 @@ export interface FullKnowledgeDocument {
   content: string
 }
 
-/** The tenant's entire knowledge base in one response (read-only). */
+/** The tenant's entire knowledge base in one response. */
 export interface FullKnowledge {
   document_count: number
   chunk_count: number
@@ -388,7 +449,7 @@ export interface FullKnowledge {
   documents: FullKnowledgeDocument[]
 }
 
-/** Per-document outcome of PATCH /knowledge-chunks/full/. */
+/** Per-document outcome of PATCH /knowledge/full/. */
 export type BulkKnowledgeStatus = 'updated' | 'not_found' | 'unavailable' | 'error'
 
 export interface BulkKnowledgeResult {

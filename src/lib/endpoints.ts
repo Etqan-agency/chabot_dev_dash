@@ -15,6 +15,7 @@ import type {
   ChatResponse,
   Document,
   DocumentContent,
+  SourcePage,
   FeatureCatalogItem,
   FeatureOverrides,
   BulkKnowledgeResult,
@@ -25,6 +26,9 @@ import type {
   GuidedTreeNode,
   GuidedTreeResponse,
   KnowledgeChunk,
+  KnowledgeSources,
+  FullKnowledgeDocument,
+  BulkKnowledgeStatus,
   ListParams,
   MySubscription,
   Paginated,
@@ -140,6 +144,26 @@ export const apiKeysApi = {
   regenerate: (id: string) => http.post<ApiKey>(`${V1}/api-keys/${id}/regenerate/`),
 }
 
+/**
+ * GET/PUT /knowledge/sources/{id}/ answers with the page (a `document` object,
+ * its `content`, and the sections it was built from). The screens here want one
+ * flat record per source, so it is flattened once, here, rather than in each of
+ * them. `section_count` is the number of pieces the text was chunked into --
+ * what `chunk_count` has always meant on this side.
+ */
+function asDocumentContent(page: SourcePage): DocumentContent {
+  return {
+    id: page.document.id,
+    filename: page.document.filename,
+    source_type: page.document.source_type,
+    processing_status: page.document.processing_status,
+    chunk_count: page.section_count,
+    chunks_created: page.section_count,
+    char_count: page.char_count,
+    content: page.content,
+  }
+}
+
 export const documentsApi = {
   list: (params?: ListParams) => http.get<Paginated<Document>>(`${V1}/documents/`, { params }),
   retrieve: (id: string) => http.get<Document>(`${V1}/documents/${id}/`),
@@ -165,11 +189,15 @@ export const documentsApi = {
     http.patch<Document>(`${V1}/documents/${id}/`, body),
   remove: (id: string) => http.delete<void>(`${V1}/documents/${id}/`),
   reindex: (id: string) => http.post<Document>(`${V1}/documents/${id}/reindex/`),
-  /** Full reconstructed text (all chunks joined, read-only; may repeat a few words at chunk seams). */
-  content: (id: string) => http.get<DocumentContent>(`${V1}/documents/${id}/content/`),
-  /** Replace a source's whole text — re-chunked + re-embedded (400 empty/>1M chars, 503 embed down). */
+  /**
+   * A source's whole text, the chunker's repeats already removed by the server
+   * (FRONTEND_API.md §5e). The page is served under /knowledge/, not under the
+   * document, because it is the *knowledge* the document produced.
+   */
+  content: (id: string) => http.get<SourcePage>(`${V1}/knowledge/sources/${id}/`).then(asDocumentContent),
+  /** Replace a source's whole text — re-chunked + re-embedded (400 empty/>1M chars/API source, 503 embed down). */
   setContent: (id: string, content: string) =>
-    http.put<DocumentContent>(`${V1}/documents/${id}/content/`, { content }),
+    http.put<SourcePage>(`${V1}/knowledge/sources/${id}/`, { content }).then(asDocumentContent),
 }
 
 export const syncApi = {
@@ -224,27 +252,107 @@ export const treeLanguagesApi = {
   remove: (code: string) => http.delete<void>(`${V1}/tree-languages/${code}/`),
 }
 
+/**
+ * GET /knowledge/sources/ groups the sources by where their knowledge came
+ * from (file / api / website) and always sends all three keys. The screens here
+ * want one flat list, newest first.
+ */
+export const knowledgeSourcesApi = {
+  list: () =>
+    http.get<KnowledgeSources>(`${V1}/knowledge/sources/`).then((d) => [
+      ...(d.sources?.file ?? []),
+      ...(d.sources?.api ?? []),
+      ...(d.sources?.website ?? []),
+    ]),
+  /** Forget a source and everything it taught the bot. */
+  remove: (id: string) => http.delete<void>(`${V1}/knowledge/sources/${id}/`),
+}
+
+/**
+ * Which per-source failure the page should show. The API distinguishes them by
+ * status: 404 is gone or not yours, 503 is the embedding provider being down
+ * (nothing was changed), and 400 is the text itself — empty, too large, or a
+ * source an API sync owns.
+ */
+function bulkStatusFor(err: unknown): BulkKnowledgeStatus {
+  const status = (err as { response?: { status?: number } })?.response?.status
+  if (status === 404) return 'not_found'
+  if (status === 503) return 'unavailable'
+  return 'error'
+}
+
 export const chunksApi = {
   /** Search/list every knowledge chunk (filters: document, search, ordering=position|-updated_at). */
-  list: (params?: ListParams) =>
-    http.get<Paginated<KnowledgeChunk>>(`${V1}/knowledge-chunks/`, { params }),
+  list: (params?: ListParams) => http.get<Paginated<KnowledgeChunk>>(`${V1}/knowledge/`, { params }),
   /** A single document’s chunks in reading order. */
   forDocument: (documentId: string, params?: ListParams) =>
-    http.get<Paginated<KnowledgeChunk>>(`${V1}/documents/${documentId}/chunks/`, { params }),
-  retrieve: (id: string) => http.get<KnowledgeChunk>(`${V1}/knowledge-chunks/${id}/`),
+    http.get<Paginated<KnowledgeChunk>>(`${V1}/knowledge/`, {
+      params: { ...params, document: documentId, ordering: 'position' },
+    }),
+  retrieve: (id: string) => http.get<KnowledgeChunk>(`${V1}/knowledge/${id}/`),
   /** Only `content` is editable; the chunk is re-embedded automatically (400 empty, 503 embed down). */
   update: (id: string, content: string) =>
-    http.patch<KnowledgeChunk>(`${V1}/knowledge-chunks/${id}/`, { content }),
+    http.patch<KnowledgeChunk>(`${V1}/knowledge/${id}/`, { content }),
   /** Removes that one piece of knowledge. */
-  remove: (id: string) => http.delete<void>(`${V1}/knowledge-chunks/${id}/`),
-  /** Bulk edit: each listed document is re-chunked + re-embedded. Max 25 docs/request, each ≤ ~1 MB. */
-  bulkUpdate: (documents: Array<{ id: string; content: string }>) =>
-    http.patch<BulkKnowledgeResult>(`${V1}/knowledge-chunks/full/`, { documents }),
-  /** Entire knowledge base in ONE response — every document with its full joined text (optional ?document=). */
-  full: (documentId?: string) =>
-    http.get<FullKnowledge>(`${V1}/knowledge-chunks/full/`, {
-      params: documentId ? { document: documentId } : undefined,
-    }),
+  remove: (id: string) => http.delete<void>(`${V1}/knowledge/${id}/`),
+  /**
+   * Save every edited source. The API saves one source per request (there is no
+   * batch endpoint), so this fans out and reports a result per source the way
+   * the page expects — one failure never hides the saves that did land.
+   */
+  bulkUpdate: async (
+    documents: Array<{ id: string; content: string }>,
+  ): Promise<BulkKnowledgeResult> => {
+    const results = await Promise.all(
+      documents.map(async ({ id, content }) => {
+        try {
+          const saved = await documentsApi.setContent(id, content)
+          return { id, status: 'updated' as const, chunk_count: saved.chunk_count }
+        } catch (err) {
+          return { id, status: bulkStatusFor(err) }
+        }
+      }),
+    )
+    return {
+      updated: results.filter((r) => r.status === 'updated').length,
+      total: results.length,
+      results,
+    }
+  },
+  /**
+   * The whole knowledge base, one full text per source. The API serves the list
+   * of sources and each source's text separately, so this composes the two: one
+   * request for the list, then one per source (skipped when a single source is
+   * asked for).
+   */
+  full: async (documentId?: string): Promise<FullKnowledge> => {
+    const ids = documentId ? [documentId] : (await knowledgeSourcesApi.list()).map((s) => s.id)
+    const settled = await Promise.all(
+      ids.map((id) =>
+        documentsApi
+          .content(id)
+          .then((doc) => doc)
+          // A source deleted between the list and its fetch is not an error.
+          .catch(() => null),
+      ),
+    )
+    const documents: FullKnowledgeDocument[] = settled
+      .filter((d): d is DocumentContent => d !== null)
+      .map((d) => ({
+        id: d.id,
+        filename: d.filename,
+        source_type: d.source_type,
+        chunk_count: d.chunk_count,
+        char_count: d.char_count,
+        content: d.content,
+      }))
+    return {
+      document_count: documents.length,
+      chunk_count: documents.reduce((n, d) => n + d.chunk_count, 0),
+      char_count: documents.reduce((n, d) => n + d.char_count, 0),
+      documents,
+    }
+  },
 }
 
 export const configApi = {
