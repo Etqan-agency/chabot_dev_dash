@@ -31,10 +31,12 @@ import { formatDate } from '@/lib/format'
 import { cn } from '@/lib/cn'
 import { useDebounce } from '@/hooks/useDebounce'
 import { useI18n } from '@/hooks/useI18n'
+import { useAuth } from '@/hooks/useAuth'
 import type { ListParams, User } from '@/types/api'
 
 export default function UsersPage() {
   const { t, dir } = useI18n()
+  const { user: me } = useAuth()
   const queryClient = useQueryClient()
   const [page, setPage] = useState(1)
   const [search, setSearch] = useState('')
@@ -78,6 +80,19 @@ export default function UsersPage() {
   const totalPages = Math.max(1, Math.ceil(total / 20))
   const PrevIcon = dir === 'rtl' ? ChevronRight : ChevronLeft
   const NextIcon = dir === 'rtl' ? ChevronLeft : ChevronRight
+
+  /**
+   * Why this user cannot be deleted, or null when they can be. The API refuses
+   * both cases with 400 (FRONTEND_API.md §11): deleting cascades through a
+   * tenant's documents, knowledge, key and subscription with no undo, and
+   * neither an admin deleting themselves nor an admin deleting the last other
+   * admin can be put right from inside the product afterwards.
+   */
+  function deleteBlockedReason(u: User): string | null {
+    if (me && u.id === me.id) return t('admin.users.action.delete.blockedSelf')
+    if (u.role === 'admin') return t('admin.users.action.delete.blockedAdmin')
+    return null
+  }
 
   function fullName(u: User) {
     return [u.first_name, u.last_name].filter(Boolean).join(' ') || u.username
@@ -205,19 +220,28 @@ export default function UsersPage() {
                         </IconAction>
                         <IconAction
                           label={
-                            u.is_active
-                              ? t('admin.users.action.deactivate')
-                              : t('admin.users.action.activate')
+                            u.role === 'admin' && u.is_active
+                              ? t('admin.users.action.deactivate.blocked')
+                              : u.is_active
+                                ? t('admin.users.action.deactivate')
+                                : t('admin.users.action.activate')
                           }
                           onClick={() => toggleActive.mutate(u)}
+                          // The API refuses to deactivate an admin: nobody could
+                          // grant the role back, so the last one in would be out.
+                          disabled={u.role === 'admin' && u.is_active}
                           busy={toggleActive.isPending && toggleActive.variables?.id === u.id}
                           className={u.is_active ? 'text-success' : 'text-faint'}
                         >
                           <Power className="size-4" />
                         </IconAction>
                         <IconAction
-                          label={t('admin.users.action.delete')}
+                          label={deleteBlockedReason(u) ?? t('admin.users.action.delete')}
                           onClick={() => setToDelete(u)}
+                          // Deleting cascades and cannot be undone, and the API
+                          // refuses both of these outright (400) -- so the button
+                          // says why instead of failing after the confirmation.
+                          disabled={deleteBlockedReason(u) !== null}
                           className="text-danger hover:bg-danger/10"
                         >
                           <Trash2 className="size-4" />
@@ -283,12 +307,15 @@ function IconAction({
   label,
   onClick,
   busy,
+  disabled,
   className,
   children,
 }: {
   label: string
   onClick: () => void
   busy?: boolean
+  /** Not allowed at all — `label` should then say why, since it is the tooltip. */
+  disabled?: boolean
   className?: string
   children: React.ReactNode
 }) {
@@ -297,9 +324,11 @@ function IconAction({
       title={label}
       aria-label={label}
       onClick={onClick}
-      disabled={busy}
+      disabled={busy || disabled}
       className={cn(
         'rounded-lg p-2 text-muted transition-colors hover:bg-surface2 disabled:opacity-50',
+        // A refused action should not also look clickable on the way past.
+        disabled && 'cursor-not-allowed hover:bg-transparent',
         className,
       )}
     >
