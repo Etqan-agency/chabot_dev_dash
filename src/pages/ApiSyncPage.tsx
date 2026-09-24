@@ -59,6 +59,10 @@ export default function ApiSyncPage() {
 
   // The documents list only shows the new source once the import has landed.
   const finished = run.data?.done ?? false
+  // True from the moment the form is submitted until the run reports itself
+  // done -- a full import takes minutes, so the page has to look busy for all
+  // of it, not just for the request that starts it.
+  const busy = sync.isPending || (runId !== null && !finished)
   useEffect(() => {
     if (finished) invalidate()
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -105,6 +109,24 @@ export default function ApiSyncPage() {
     <div>
       <PageHeader title={t('api.title')} description={t('api.subtitle')} />
 
+      {busy ? (
+        <div className="mb-6 overflow-hidden rounded-xl border border-brand-300/40 bg-brand-50 dark:bg-brand-500/10">
+          <div className="flex items-center gap-3 px-4 py-3">
+            <Spinner className="size-4 shrink-0" />
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-brand-700 dark:text-brand-300">
+                {run.data ? t(`api.run.status.${run.data.status}`) : t('api.run.queued')}
+              </p>
+              <p className="text-xs text-muted">{t('api.run.keepsGoing')}</p>
+            </div>
+          </div>
+          {/* Indeterminate: the server reports a stage, never a percentage. */}
+          <div className="h-1 w-full overflow-hidden bg-brand-500/20">
+            <div className="h-full w-1/3 animate-indeterminate bg-brand-500" />
+          </div>
+        </div>
+      ) : null}
+
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-5">
         {/* Sync tool */}
         <Card className="lg:col-span-3">
@@ -117,12 +139,14 @@ export default function ApiSyncPage() {
                 placeholder="https://example.com/api/items/"
                 value={apiUrl}
                 onChange={(e) => setApiUrl(e.target.value)}
+                disabled={busy}
                 required
               />
               <Input
                 label={t('api.field.docName')}
                 value={docName}
                 onChange={(e) => setDocName(e.target.value)}
+                disabled={busy}
                 hint={t('api.field.docNameHint')}
               />
 
@@ -131,6 +155,7 @@ export default function ApiSyncPage() {
                   type="checkbox"
                   checked={fullRefresh}
                   onChange={(e) => setFullRefresh(e.target.checked)}
+                  disabled={busy}
                   className="mt-0.5 size-4 accent-brand-500"
                 />
                 <span>
@@ -160,8 +185,8 @@ export default function ApiSyncPage() {
                 ))}
 
               <div className="flex justify-end">
-                <Button type="submit" loading={sync.isPending} disabled={!apiUrl.trim()}>
-                  <RefreshCw className="size-4" /> {t('api.runSync')}
+                <Button type="submit" loading={busy} disabled={busy || !apiUrl.trim()}>
+                  <RefreshCw className="size-4" /> {busy ? t('api.running') : t('api.runSync')}
                 </Button>
               </div>
             </form>

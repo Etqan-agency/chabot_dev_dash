@@ -126,6 +126,22 @@
   }
 }
 
+/* --- Progress ----------------------------------------------------------- */
+/* A bar for work whose length the server does not report: an import announces
+   its stage (fetching, structuring, embedding), never a percentage, so the bar
+   says "still working" rather than inventing progress. */
+@keyframes indeterminate {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(300%);
+  }
+}
+.animate-indeterminate {
+  animation: indeterminate 1.4s ease-in-out infinite;
+}
+
 /* --- Chat animations --------------------------------------------------- */
 @keyframes msg-in {
   from {
