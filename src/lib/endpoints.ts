@@ -35,6 +35,7 @@ import type {
   Plan,
   PlanInput,
   Subscription,
+  ApiIngestionRun,
   SyncApiContentRequest,
   SyncApiContentResponse,
   TokenPair,
@@ -201,8 +202,18 @@ export const documentsApi = {
 }
 
 export const syncApi = {
+  /**
+   * Start an import. Answers 202 with a `run_id` in production -- a full import
+   * runs one LLM call per record, far longer than any gateway holds a
+   * connection -- so the caller polls `run()`'s id with `runStatus`. A server
+   * configured to import in-request answers 200 with the finished report
+   * instead; `isQueuedSync` tells the two apart.
+   */
   run: (body: SyncApiContentRequest) =>
     http.post<SyncApiContentResponse>(`${V1}/sync-api-content/`, body),
+  /** Progress of a running import; poll until `done` (FRONTEND_API.md §5a). */
+  runStatus: (runId: string) =>
+    http.get<ApiIngestionRun>(`${V1}/sync-api-content/runs/${runId}/`),
 }
 
 export const featuresApi = {

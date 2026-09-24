@@ -154,15 +154,76 @@ export interface SyncApiContentRequest {
   full_refresh?: boolean
 }
 
-export interface SyncApiContentResponse {
+/**
+ * The finished sync report. Returned directly (200) only when the server
+ * imports in-request; in production the import runs on a worker, so this
+ * arrives as `result` on the run once it completes (FRONTEND_API.md §5).
+ */
+export interface SyncApiReport {
   status: string
-  processed: number
-  chunks_created: number
-  items_new: number
-  items_updated: number
-  items_unchanged: number
-  items_removed: number
-  errors: number
+  run_id?: UUID
+  pages_fetched?: number
+  truncated?: boolean
+  processed?: number
+  items_stored?: number
+  items_analyzed?: number
+  analysis_errors?: number
+  items_new?: number
+  items_updated?: number
+  items_unchanged?: number
+  items_removed?: number
+  items_protected?: number
+  chunks_created?: number
+  errors?: number
+}
+
+/** POST /sync-api-content/ answering 202: the import is running elsewhere. */
+export interface SyncApiQueued {
+  status: 'queued'
+  run_id: UUID
+  /** Path to poll, e.g. /api/v1/sync-api-content/runs/{run_id}/. */
+  status_url: string
+  detail?: string
+}
+
+/**
+ * POST /sync-api-content/ answers EITHER shape: 202 queued (the normal case --
+ * a full import runs one LLM call per record and takes minutes) or 200 with the
+ * finished report on a server configured to import in-request.
+ */
+export type SyncApiContentResponse = SyncApiQueued | SyncApiReport
+
+export type ApiIngestionStatus =
+  | 'queued'
+  | 'fetching'
+  | 'structuring'
+  | 'embedding'
+  | 'completed'
+  | 'blocked'
+  | 'failed'
+
+/** GET /sync-api-content/runs/{run_id}/ — poll until `done` (§5a). */
+export interface ApiIngestionRun {
+  run_id: UUID
+  status: ApiIngestionStatus
+  done: boolean
+  endpoint?: string
+  pages_fetched?: number
+  records_fetched?: number
+  records_processed?: number
+  chunks_created?: number
+  field_coverage?: number
+  duration_ms?: number
+  /** Present once `status` is "completed". */
+  result?: SyncApiReport
+  /** Why it was blocked or failed. */
+  detail?: string
+  reason?: string
+}
+
+/** True when the POST came back 202 and the import is running elsewhere. */
+export function isQueuedSync(r: SyncApiContentResponse): r is SyncApiQueued {
+  return 'status_url' in r || r.status === 'queued'
 }
 
 export interface UsageTotals {

@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { AlertTriangle, CheckCircle2, Plug, Power, RefreshCw, RotateCw, Sparkles, Trash2 } from 'lucide-react'
 import { Link } from 'react-router-dom'
@@ -15,7 +15,8 @@ import { getApiErrorMessage, getApiErrorStatus } from '@/lib/api'
 import { formatDate } from '@/lib/format'
 import { cn } from '@/lib/cn'
 import { useI18n } from '@/hooks/useI18n'
-import type { Document, SyncApiContentResponse } from '@/types/api'
+import { isQueuedSync } from '@/types/api'
+import type { ApiIngestionRun, Document, SyncApiReport } from '@/types/api'
 
 export default function ApiSyncPage() {
   const { t } = useI18n()
@@ -24,6 +25,8 @@ export default function ApiSyncPage() {
   const [docName, setDocName] = useState('API Content')
   const [fullRefresh, setFullRefresh] = useState(false)
   const [toDelete, setToDelete] = useState<Document | null>(null)
+  // Set when the import was accepted (202) and is running on a worker.
+  const [runId, setRunId] = useState<string | null>(null)
 
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: ['documents'] })
@@ -37,8 +40,29 @@ export default function ApiSyncPage() {
         document_name: docName.trim() || undefined,
         full_refresh: fullRefresh,
       }),
-    onSuccess: invalidate,
+    onSuccess: (res) => {
+      // A full import runs one LLM call per record, so the server accepts it
+      // (202) and works through it on a worker. Nothing is imported yet -- the
+      // run has to be followed to its end before anything can be claimed.
+      setRunId(isQueuedSync(res) ? res.run_id : null)
+      invalidate()
+    },
   })
+
+  const run = useQuery({
+    queryKey: ['api-ingestion-run', runId],
+    queryFn: () => syncApi.runStatus(runId as string),
+    enabled: runId !== null,
+    // Poll while it works; stop the moment it reports itself done.
+    refetchInterval: (query) => (query.state.data?.done ? false : 2000),
+  })
+
+  // The documents list only shows the new source once the import has landed.
+  const finished = run.data?.done ?? false
+  useEffect(() => {
+    if (finished) invalidate()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [finished])
 
   // List of API-sourced documents (filtered client-side; these are typically few).
   const { data, isLoading, isError, error } = useQuery({
@@ -148,7 +172,9 @@ export default function ApiSyncPage() {
         <Card className="lg:col-span-2">
           <CardHeader title={t('api.result.title')} description={t('api.result.subtitle')} />
           <CardBody>
-            {sync.data ? (
+            {runId ? (
+              <RunProgress run={run.data} error={run.error} />
+            ) : sync.data && !isQueuedSync(sync.data) ? (
               <SyncResult result={sync.data} />
             ) : (
               <p className="py-6 text-center text-sm text-muted">{t('api.result.empty')}</p>
@@ -285,16 +311,90 @@ export default function ApiSyncPage() {
   )
 }
 
-function SyncResult({ result }: { result: SyncApiContentResponse }) {
+/**
+ * A running import, followed to its end. The POST only means the server
+ * accepted the work, so nothing here claims success until the run says `done`
+ * — and a run that ended `blocked` or `failed` says so instead of showing a
+ * grid of zeros (FRONTEND_API.md §5a).
+ */
+function RunProgress({ run, error }: { run?: ApiIngestionRun; error: unknown }) {
   const { t } = useI18n()
-  const stats: { label: string; value: number; tone?: 'danger' }[] = [
+
+  if (error) {
+    return (
+      <div className="flex items-start gap-2 text-sm text-danger">
+        <AlertTriangle className="mt-0.5 size-5 shrink-0" />
+        <p>{getApiErrorMessage(error)}</p>
+      </div>
+    )
+  }
+  if (!run) {
+    return (
+      <div className="flex items-center justify-center gap-2 py-6 text-sm text-muted">
+        <Spinner className="size-4" /> {t('api.run.queued')}
+      </div>
+    )
+  }
+  if (run.status === 'completed' && run.result) return <SyncResult result={run.result} />
+  if (run.done) {
+    // blocked = quality control refused it and existing knowledge is untouched;
+    // failed = it did not finish. Either way, say which and why.
+    return (
+      <div className="flex items-start gap-2 text-sm text-danger">
+        <AlertTriangle className="mt-0.5 size-5 shrink-0" />
+        <div>
+          <p className="font-medium">{t(`api.run.status.${run.status}`)}</p>
+          {run.detail ? <p className="mt-0.5 text-muted">{run.detail}</p> : null}
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div>
+      <div className="mb-4 flex items-center gap-2 text-sm font-medium text-fg">
+        <Spinner className="size-4" /> {t(`api.run.status.${run.status}`)}
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <Stat label={t('api.run.pages')} value={run.pages_fetched} />
+        <Stat label={t('api.run.records')} value={run.records_processed} />
+      </div>
+      <p className="mt-3 text-xs text-muted">{t('api.run.keepsGoing')}</p>
+    </div>
+  )
+}
+
+function Stat({ label, value, tone }: { label: string; value?: number; tone?: 'danger' }) {
+  return (
+    <div className="rounded-lg border border-border bg-surface2 p-3">
+      <p className="text-xs text-muted">{label}</p>
+      <p
+        className={cn(
+          'mt-0.5 text-lg font-semibold tabular-nums',
+          tone === 'danger' ? 'text-danger' : 'text-fg',
+        )}
+      >
+        {/* A number the server did not send is unknown, not zero. */}
+        {typeof value === 'number' ? value.toLocaleString('en') : '—'}
+      </p>
+    </div>
+  )
+}
+
+function SyncResult({ result }: { result: SyncApiReport }) {
+  const { t } = useI18n()
+  const stats: { label: string; value?: number; tone?: 'danger' }[] = [
     { label: t('api.result.processed'), value: result.processed },
     { label: t('api.result.chunks'), value: result.chunks_created },
     { label: t('api.result.new'), value: result.items_new },
     { label: t('api.result.updated'), value: result.items_updated },
     { label: t('api.result.unchanged'), value: result.items_unchanged },
     { label: t('api.result.removed'), value: result.items_removed },
-    { label: t('api.result.errors'), value: result.errors, tone: result.errors ? 'danger' : undefined },
+    {
+      label: t('api.result.errors'),
+      value: result.errors,
+      tone: result.errors ? 'danger' : undefined,
+    },
   ]
   return (
     <div>
@@ -303,19 +403,12 @@ function SyncResult({ result }: { result: SyncApiContentResponse }) {
       </div>
       <div className="grid grid-cols-2 gap-3">
         {stats.map((s) => (
-          <div key={s.label} className="rounded-lg border border-border bg-surface2 p-3">
-            <p className="text-xs text-muted">{s.label}</p>
-            <p
-              className={cn(
-                'mt-0.5 text-lg font-semibold tabular-nums',
-                s.tone === 'danger' ? 'text-danger' : 'text-fg',
-              )}
-            >
-              {s.value.toLocaleString('en')}
-            </p>
-          </div>
+          <Stat key={s.label} label={s.label} value={s.value} tone={s.tone} />
         ))}
       </div>
+      {result.truncated ? (
+        <p className="mt-3 text-xs text-muted">{t('api.result.truncated')}</p>
+      ) : null}
     </div>
   )
 }
