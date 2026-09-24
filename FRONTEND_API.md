@@ -19,33 +19,7 @@ Base URL:  https://chatbot-api.zaychain.com/api/v1
   `{ "count", "next", "previous", "results": [...] }`.
 
 > **CORS:** your site's origin must be whitelisted server-side
-> (`CORS_ALLOWED_ORIGINS`). Give the backend team your frontend URL(s). In
-> production only the origins you register are allowed (localhost is dev-only).
-
-### Security limits & rate limits (updated 2026-08-31)
-
-Recent hardening added server-side limits. Handle these status codes:
-
-- **Rate limits (HTTP 429)** — per-tenant/IP scoped throttles: `login` 10/min,
-  `register` 5/min, `auth/refresh` 20/min, email/password code verification
-  10/min, `chat` 30/min, `crawl-website` 5/min, `sync-api-content` 10/min,
-  document upload 20/min. On 429, back off and retry after a short delay.
-- **Chat input caps (HTTP 400)** — `question` ≤ 4000 chars; `history` ≤ 20 items,
-  each ≤ 4000 chars. Oversized requests are rejected before any credit is spent.
-- **Chatbot config (HTTP 400)** — `top_k` must be 1–20; `similarity_threshold`
-  must be 0.0–1.0. Out-of-range values are rejected (previously unbounded).
-- **API keys** — the raw key is now shown **only once**, in the response of
-  create/regenerate (fields `key` + `key_prefix`). Listing/`GET` an existing key
-  returns a masked `key_prefix` (e.g. `"a1b2c3d4…"`) and `key: null`; store the
-  raw key at creation time. Rotating (regenerate) invalidates the previous key.
-- **Website/API-content fetch (HTTP 400 / 402 / 503)** — URLs that resolve to
-  private, loopback, link-local, or cloud-metadata addresses are rejected (400,
-  SSRF protection), including via redirects. A billing/feature-check error now
-  fails **closed** (503), not open. Paid-feature gate still returns 402.
-- **Document upload (HTTP 400)** — files are validated by content (magic bytes),
-  not just extension; spoofed or unsupported types are rejected.
-- **API docs** (`/api/schema/`, `/api/docs/`, `/api/redoc/`) are now
-  **admin-only**.
+> (`CORS_ALLOWED_ORIGINS`). Give the backend team your frontend URL(s).
 
 ---
 
@@ -82,9 +56,7 @@ const res = await fetch(`${BASE}/auth/login/`, {
 const data = await res.json();
 // data.access   -> short-lived access token (send on every request)
 // data.refresh  -> use to get a new access token
-// data.user     -> { id, username, email, role, api_key, plan, ... }
-//   (`plan` carries the tenant's token allowance, but is populated only for
-//    admin viewers — it is null for a normal user; see §7 / §11.)
+// data.user     -> { id, username, email, role, api_key, ... }
 ```
 
 **Use the token on every request:**
@@ -235,14 +207,12 @@ Paginated. Each item:
   "processing_status": "completed",   // pending | processing | completed | failed
   "error_message": "",
   "is_active": true,
-  "source_type": "file",              // file | api
+  "source_type": "file",              // file | api | website
   "uploaded_by_username": "original_software",
   "created_at": "2026-06-17T01:03:41Z"
 }
 ```
-Filters: `?processing_status=completed`, `?search=<filename>`, `?ordering=-created_at`,
-and **`?source_type=file|api|website`** to list knowledge by where it came from
-(uploaded file / external API sync / website crawl).
+Filters: `?processing_status=completed`, `?search=<filename>`, `?ordering=-created_at`.
 
 ### Upload a Word file — `POST /documents/upload-word/`  (multipart)
 ```js
@@ -266,90 +236,12 @@ show `error_message`). Then `chunk_count` is the number of searchable pieces.
 ### Delete — `DELETE /documents/{id}/`  → `204`
 ### Re-index — `POST /documents/{id}/reindex/`  → `202` (re-embeds the document)
 
-### Control the knowledge content itself (chunks)
-
-Every document — **from any source** (file, API sync, website crawl) — is split
-into searchable **chunks** (the actual pieces the bot retrieves and answers
-from). Use these to review and fix what the bot learned without re-uploading:
-correct a wrong sentence the crawler pulled, delete an off-topic page, etc.
-
-**Full document text — all chunks joined as one block** (NOT paginated fragments):
-`GET /documents/{id}/content/`
-```json
-{ "id": "…", "filename": "site.html", "source_type": "website",
-  "processing_status": "completed", "chunk_count": 12, "char_count": 8421,
-  "content": "…the whole reconstructed text of the document…" }
-```
-Use this to read or export a whole source as one piece (e.g. show the full
-document in an editor). Chunks keep a small overlap for retrieval quality, so the
-joined `content` may repeat a few words where two chunks meet.
-
-**Edit the whole source as one block:** `PUT /documents/{id}/content/` with
-`{ "content": "<full new text>" }` — the document is **re-chunked and re-embedded**,
-so the bot's knowledge updates immediately. Returns the new full-content payload
-(plus `chunks_created`). `400` if `content` is empty or over ~1,000,000 chars;
-`503` if the embedding backend is momentarily down (old content kept). You can
-still edit one piece at a time via `PATCH /knowledge-chunks/{id}/`.
-
-**Entire knowledge base in ONE response** (every document with its full joined
-text — the whole knowledge, not fragments): `GET /knowledge-chunks/full/`
-```json
-{ "document_count": 5, "chunk_count": 60, "char_count": 40210,
-  "documents": [
-    { "id": "…", "filename": "site.html", "source_type": "website",
-      "chunk_count": 12, "char_count": 8421, "content": "…full text of this source…" },
-    … one entry per document …
-  ] }
-```
-Optional `?document=<id>` narrows to a single source. Can be large — it returns
-the tenant's whole knowledge.
-
-**Bulk edit the knowledge:** `PATCH /knowledge-chunks/full/` with
-`{ "documents": [ { "id": "<doc-id>", "content": "<full new text>" }, … ] }` —
-each listed document is re-chunked + re-embedded. So you can GET `/full/`, edit the
-`content` fields, and PATCH them back. **Max 25 documents/request; each ≤ ~1 MB.**
-Returns a per-document result so partial failures don't fail the batch:
-```json
-{ "updated": 2, "total": 3,
-  "results": [ { "id": "…", "status": "updated", "chunk_count": 8 },
-               { "id": "…", "status": "not_found" },
-               { "id": "…", "status": "unavailable" } ] }
-```
-`status`: `updated` | `not_found` (not yours / missing) | `unavailable` (embedding
-backend down) | `error` (empty/oversized).
-
-**List a document's chunks** (reading order): `GET /documents/{id}/chunks/` — paginated.
-Or list/search across all your knowledge: `GET /knowledge-chunks/`
-```json
-// each chunk
-{
-  "id": "…", "document": "…", "document_filename": "site.html",
-  "source_type": "website",        // file | api | website
-  "position": 3, "content": "…the learned text…",
-  "char_count": 412, "source_id": "", "content_hash": "…",
-  "embedding_model": "text-embedding-3-large", "is_embedded": true,
-  "created_at": "…", "updated_at": "…"
-}
-```
-Filters on `GET /knowledge-chunks/`: `?document=<id>`, `?search=<text>`,
-`?ordering=position|-updated_at`.
-
-**Read one:** `GET /knowledge-chunks/{id}/`
-
-**Edit the text:** `PATCH /knowledge-chunks/{id}/`
-```json
-{ "content": "the corrected text" }
-```
-Only `content` is editable. The chunk is **re-embedded automatically** so the fix
-is searchable immediately; the updated chunk is returned. Empty content → `400`;
-if the embedding backend is momentarily down the edit is refused with `503` (the
-old text is kept, never left stale). Chunks are **created by ingestion only** —
-there is no `POST` to add one; upload a file / sync / crawl instead.
-
-**Delete:** `DELETE /knowledge-chunks/{id}/` → `204` (removes that one piece of knowledge).
-
-> All chunk endpoints are scoped to the authenticated tenant — a chunk that
-> belongs to another tenant's document returns `404`.
+> To review or correct the *content* the bot learned from a document — rather
+> than replacing the whole file — open it as a page: `GET`/`PUT`
+> `/knowledge/sources/{id}/` serves and saves the whole document as one text
+> (§5e), and §5d edits it one piece at a time. Note that re-indexing rebuilds a
+> document's chunks from the original file, so it replaces any corrections made
+> either way.
 
 > Limits per tenant: **100 documents / 200 MB / 20 MB per file** by default.
 > Over the limit returns **413** (see §10). **Free-tier** tenants are much
@@ -358,16 +250,103 @@ there is no `POST` to add one; upload a file / sync / crawl instead.
 ---
 
 ## 5. Sync content from an external API — `POST /sync-api-content/`
-Pull a JSON list from a URL into the tenant's knowledge.
+Pull JSON from a URL into the tenant's knowledge.
 ```json
-{ "api_url": "https://api.example.com/products", "items_key": "results", "full_refresh": false }
+{ "api_url": "https://api.example.com/products", "items_key": "results",
+  "ai_analysis": true, "max_pages": 200, "full_refresh": false }
 ```
-Returns sync stats: `{ "status", "processed", "chunks_created", "items_new", "items_updated", ... }`.
-Re-running only re-embeds changed items (incremental).
+In production the import runs on a worker, so the call returns **`202`**
+immediately and you poll for the result:
+```json
+{
+  "status": "queued",
+  "run_id": "94a99870-5d52-46e3-abe4-d9846e524d04",
+  "status_url": "/api/v1/sync-api-content/runs/94a99870-.../",
+  "detail": "The import is running in the background. Poll status_url for progress."
+}
+```
+A full import runs one LLM call per record, so a few hundred records take
+minutes — far longer than any gateway will hold a connection open. Do **not**
+block the UI on this request; show progress from `status_url` (§5a).
+
+On a deployment configured to import in-request (`INGESTION_MODE=sync`, small
+self-hosted setups) the same call instead returns `200` with the finished sync
+report below. Branch on the status code, not on the body.
+
+Returns `200` with the sync report:
+```json
+{
+  "status": "success",
+  "run_id": "94a99870-5d52-46e3-abe4-d9846e524d04",
+  "pages_fetched": 3,       // pages read from the source
+  "truncated": false,       // true = max_pages stopped it early, there is more
+  "processed": 41,          // records read from the response
+  "items_stored": 41,       // records archived verbatim
+  "items_analyzed": 41,     // records the AI described
+  "analysis_errors": 0,     // records the AI could not describe (retried next run)
+  "items_new": 40,          // embedded for the first time
+  "items_updated": 1,       // changed at the source, re-embedded
+  "items_unchanged": 0,     // skipped — no embedding cost
+  "items_removed": 0,       // gone from the source, dropped from knowledge
+  "items_protected": 0,     // hand-edited records the sync kept (§5d)
+  "chunks_created": 57,
+  "errors": 0
+}
+```
+Re-running only re-embeds changed items (incremental), so syncing a live
+database on a schedule is cheap.
+
+The **entire source** is imported:
+
+* **Every page.** If the response paginates (`next`, `links.next`, or a `Link`
+  header), the sync follows it to the end. `pages_fetched` in the reply says how
+  many were read; `truncated: true` means `max_pages` cut it short.
+* **Every field.** Each list element becomes a record, and the response's other
+  top-level fields (`count`, `next`, anything else) are kept as one extra
+  `response_metadata` record per page. `items_key` is optional — when that key is
+  absent the longest top-level list is used, so a bare JSON array,
+  `{ "data": [...] }`, or a single JSON object all work as-is.
+* **Verbatim.** Every record is archived exactly as fetched *before* it is
+  chunked or embedded, so an embedding outage can cost searchability but never
+  the data — it is re-indexed from the archive, with no second call to the source.
+
+**AI analysis** (`ai_analysis`, default `true`): each new or changed record is
+described in plain language by the chat LLM, and that description is indexed
+**next to** the raw JSON, never instead of it — so answers retrieve on prose and
+still quote exact fields. It is best-effort: with no LLM configured, or during a
+provider outage, the sync still stores and indexes everything and retries the
+description on the next run. Analysis tokens are metered like any other LLM call.
+Stats: `items_stored`, `items_analyzed`, `analysis_errors`.
 
 > **Not on the free tier.** This endpoint returns **`402`** unless the tenant's
 > plan enables it (`allow_api_sync`). Free-tier users import knowledge only by
 > uploading a small file (§4). Show an upgrade CTA on `402`.
+
+### 5a. Poll an import — `GET /sync-api-content/runs/<run_id>/`
+The other half of the `202`. Poll every few seconds until `done` is `true`.
+```json
+{
+  "run_id": "94a99870-...",
+  "status": "embedding",   // queued -> fetching -> structuring -> embedding -> completed
+  "done": false,
+  "endpoint": "https://api.example.com/products",
+  "pages_fetched": 3,
+  "records_fetched": 200,
+  "records_processed": 41,
+  "chunks_created": 57,
+  "field_coverage": 1.0,
+  "duration_ms": 153540
+}
+```
+Terminal states — `done: true` — and what to show:
+
+| `status` | meaning | extra fields |
+|---|---|---|
+| `completed` | the import landed | `result` — the full sync report above |
+| `blocked` | quality control refused it; **existing knowledge is unchanged** | `detail`, `reason`, `validation` |
+| `failed` | the import did not finish | `detail` — why |
+
+Runs are tenant-scoped: another tenant's `run_id` returns `404`, never its data.
 
 ---
 
@@ -447,6 +426,247 @@ Notes:
 
 ---
 
+## 5d. Knowledge content — `/knowledge/` (full CRUD)
+Documents are what you *uploaded*; **knowledge content** is what the bot actually
+answers from. This is full CRUD over those pieces, across every source (file
+upload, API sync, website crawl) — so a wrong, stale or embarrassing answer gets
+fixed in place, without re-uploading a file or re-crawling a site.
+
+> **Building the knowledge screen? Start at §5e, not here.** §5e serves each
+> source as **one continuous text** that a person can read, edit in a textarea
+> and delete — one page per source, no chunks. This section is the per-piece
+> API underneath it: use it for search, for auditing, and for the one case §5e
+> refuses (API-synced sources).
+
+| Method | Path | What it does |
+|---|---|---|
+| `GET` | `/knowledge/` | List & search everything the bot knows |
+| `POST` | `/knowledge/` | Teach it one new piece |
+| `GET` | `/knowledge/{id}/` | Read one piece |
+| `PATCH` / `PUT` | `/knowledge/{id}/` | Fix the wording |
+| `DELETE` | `/knowledge/{id}/` | Make it forget one piece |
+| `POST` | `/knowledge/bulk-delete/` | Forget many at once |
+| `GET` | `/knowledge/stats/` | Totals per source + how much was corrected |
+| `GET` | `/knowledge/sources/` | The sources, grouped file / api / website |
+| `GET` | `/knowledge/sources/{document_id}/` | One source as **one block of text** |
+| `PUT` | `/knowledge/sources/{document_id}/` | Save that whole text back |
+| `DELETE` | `/knowledge/sources/{document_id}/` | Delete the source and everything it taught |
+
+Everything is scoped to the caller: you only ever see or touch knowledge that
+belongs to your own documents. Another tenant's piece is a plain **`404`**.
+
+### List — `GET /knowledge/`
+Paginated (20/page). Each row carries what a review screen needs:
+```json
+{
+  "id": "cd0d9c53-...",
+  "document": "531a98e9-...",
+  "document_name": "handbook.docx",
+  "source_type": "file",              // file | api | website
+  "api_url": "",                      // set when it came from an API sync
+  "is_active": true,                  // its document is active
+  "position": 3,                      // order within the document
+  "content": "Refunds are processed within 14 days.",
+  "char_count": 37,
+  "metadata": { "manually_edited": true },
+  "source_id": "",                    // the source record's id (API sync)
+  "embedding_model": "text-embedding-3-large",
+  "is_embedded": true,                // false = not searchable yet
+  "was_edited": true,
+  "edited_at": "2026-09-14T00:11:07Z",
+  "created_at": "2026-09-14T00:11:07Z",
+  "updated_at": "2026-09-14T00:11:07Z"
+}
+```
+
+**Filters** — combine freely:
+
+| Query | Effect |
+|---|---|
+| `?document=<uuid>` | only this document's knowledge |
+| `?source_type=file\|api\|website` | only one kind of source |
+| `?document_name=handbook` | substring of the document name |
+| `?source_id=42` | the source record a piece came from (API sync) |
+| `?is_active=true` | only knowledge from active documents |
+| `?edited=true` | only the pieces a human corrected (`false` = only untouched) |
+| `?search=refund` | substring of the content |
+| `?ordering=-updated_at` | also `created_at`, `position`, `edited_at` |
+
+### Fix one piece — `PATCH /knowledge/{id}/`
+```js
+await api(`/knowledge/${id}/`, {
+  method: "PATCH",
+  body: { content: "Refunds are processed within 14 days." },
+});
+// 200 -> the updated row (same shape as the list row above)
+```
+`PUT` behaves the same. `content` must be non-empty; `metadata` is optional and
+merges into the existing metadata.
+
+### Teach one new piece — `POST /knowledge/`
+```json
+{ "document": "531a98e9-...", "content": "Gift cards never expire." }
+```
+`201` with the new row. `document` is required (which document it belongs to)
+and must be one of yours; it is appended at the end (`position`) and is
+searchable immediately.
+
+### Forget — `DELETE /knowledge/{id}/` → `204`
+```json
+// POST /knowledge/bulk-delete/   (max 500 ids)
+{ "ids": ["cd0d9c53-...", "a5998233-..."] }
+// 200 -> { "deleted": 2 }
+```
+Ids that aren't yours are silently skipped — the count tells you what actually went.
+
+### Overview — `GET /knowledge/stats/`
+```json
+{ "total": 412, "edited": 7, "by_source": { "file": 120, "api": 280, "website": 12 },
+  "documents": 5 }
+```
+
+### Two things worth knowing
+
+**1. Every write re-embeds.** Retrieval matches on a piece's *embedding*, not on
+its text — so saving new wording without re-embedding would leave the bot showing
+your correction while still being retrieved for the wording you just removed.
+Create and edit both embed synchronously and refresh the vector index. If the
+embedding provider is down, the write is rejected with **`400`** and the previous
+text is left exactly as it was — never half-applied. (Re-saving identical text is
+a no-op and costs nothing.)
+
+**2. How corrections interact with re-syncs.**
+
+| You re-run | What happens to your correction |
+|---|---|
+| API sync, source record unchanged | **Kept.** The reply counts it in `items_protected` |
+| API sync, source record changed | Replaced — the source is newer and wins |
+| API sync with `full_refresh: true` | Replaced — it rebuilds everything from the source |
+| `POST /documents/{id}/reindex/` | Replaced — chunks are rebuilt from the original file |
+| Re-crawl of a website | Replaced for pages whose content changed |
+| `PUT /knowledge/sources/{id}/` (§5e) | Replaced — the whole source becomes the text you saved |
+
+So a correction sticks for as long as the source behind it says the same thing.
+Use `?edited=true` to review every correction currently in force.
+
+---
+
+## 5e. A source as one editable page — `/knowledge/sources/`
+§5d addresses knowledge one chunk at a time, which is what *auditing* needs.
+These endpoints address it the way a **person reads and writes**: a whole
+source, in order, as **one block of text** — shown in a page, edited in a
+textarea, saved, or deleted. Your UI never has to think in chunks.
+
+| | |
+|---|---|
+| `GET /knowledge/sources/` | the list of sources — one row per page you can open |
+| `GET /knowledge/sources/{document_id}/` | that page: the whole text in `content` |
+| `PUT /knowledge/sources/{document_id}/` | save the edited text (re-embedded) |
+| `DELETE /knowledge/sources/{document_id}/` | delete the source entirely |
+
+Same rows and same tenant scoping as §5d, different unit. `{document_id}` that
+is malformed, unknown, or another tenant's is a plain **`404`** in all cases.
+
+### The sources — `GET /knowledge/sources/`
+```json
+{
+  "sources": {
+    "file":    [ { "id": "…", "filename": "handbook.pdf", "source_type": "file",
+                   "api_url": "", "is_active": true, "processing_status": "completed",
+                   "section_count": 14, "edited_count": 2, "char_count": 16320,
+                   "created_at": "…", "updated_at": "…" } ],
+    "api":     [ … ],
+    "website": [ … ]
+  },
+  "totals": {
+    "file":    { "documents": 1, "sections": 14, "chars": 16320 },
+    "api":     { "documents": 0, "sections": 0,  "chars": 0 },
+    "website": { "documents": 0, "sections": 0,  "chars": 0 }
+  }
+}
+```
+All three keys are **always present**, empty or not, so a tab per source type
+never reads `undefined`. A source with nothing indexed yet is still listed, with
+`section_count: 0` and its `processing_status` — otherwise a failed upload would
+vanish with no way to see or fix or delete it.
+
+`char_count` is how much *text* the source contributed, which is not its file
+size: a 4 MB PDF of scans contributes nothing.
+
+### Read the page — `GET /knowledge/sources/{document_id}/`
+```json
+{
+  "document": { "id": "…", "filename": "handbook.pdf", "source_type": "file",
+                "api_url": "", "is_active": true, "processing_status": "completed",
+                "created_at": "…", "updated_at": "…" },
+  "content": "Refunds take 30 days from delivery. Shipping is free above …",
+  "char_count": 16320,
+  "section_count": 14,
+  "edited_count": 2,
+  "sections": [ … ]
+}
+```
+
+**`content` is the whole source as one readable text — render that.** The server
+has already done the stitching: knowledge is *stored* in overlapping ~1200-character
+pieces (each needs its own embedding, and the overlap keeps a sentence that
+straddles a boundary wholly inside *some* embedding), and joining those naively
+would show the reader the same sentence twice at every boundary. `content` has
+those repeats removed, exactly once each, in reading order. `char_count` is its
+length — what a person actually reads.
+
+```js
+const page = await api(`/knowledge/sources/${documentId}/`);
+textarea.value = page.content;          // that is the whole integration
+```
+
+`sections` is the same text as the pieces it was built from, each with its chunk
+`id`, `position`, `char_count`, `was_edited` and a `lead` (how many of its opening
+characters merely repeat the previous one). **Ignore it for a reading/editing
+page** — it is there for an audit view that wants to see, or fix, one piece at a
+time via `/knowledge/{id}/` (§5d).
+
+### Save the page — `PUT /knowledge/sources/{document_id}/`
+```js
+await api(`/knowledge/sources/${documentId}/`, {
+  method: "PUT",
+  body: { content: textarea.value },
+});
+// 200 -> the same payload as the GET above, rebuilt from what you just saved
+```
+The text is re-chunked and re-embedded, and the old pieces are replaced — so the
+bot *answers* from the new wording, not just displays it. Send the **whole**
+text, not a diff; what you send is what the source becomes.
+
+| | |
+|---|---|
+| `200` | saved — the response is the fresh page, re-read it into your editor |
+| `400` | empty content, over **1,000,000 characters**, or an API-synced source (below) |
+| `404` | not yours / no such source |
+| `503` | the embedding provider is down — **nothing changed**, the old text is still live; offer a retry |
+
+Read → save unchanged → read again returns exactly what you started with, so an
+editor that saves on every keystroke never inflates the document.
+
+> **API-synced sources are edited piece by piece, not as a page.** `PUT` on a
+> source with `source_type: "api"` returns **`400`**. A sync tracks each record by
+> its id and deliberately keeps the records a human corrected (`items_protected`,
+> §5); rewriting the whole document throws those ids away, and the next sync would
+> re-import every record *next to* your text instead of replacing it — the same
+> facts, twice. For those sources, edit the section with `PATCH /knowledge/{id}/`
+> (§5d) and the sync keeps protecting it. Hide or disable the page's editor when
+> `document.source_type === "api"`.
+
+A source whose upload **failed** to parse can be rescued this way: paste its text,
+`PUT` it, and `processing_status` flips to `completed`.
+
+### Delete the page — `DELETE /knowledge/sources/{document_id}/` → `204`
+Removes the source and everything it taught the bot (its sections cascade).
+Identical to `DELETE /documents/{id}/` — it is exposed here so the page has one
+URL for read, save and delete.
+
+---
+
 ## 6. Bot configuration (optional) — `GET` / `PATCH /chatbot-config/`
 The bot works with **zero config** (it infers identity from the uploaded data).
 Use this only to customise its presentation.
@@ -458,8 +678,8 @@ Use this only to customise its presentation.
   "tone": "friendly",            // friendly | formal | concise
   "default_language": "auto",
   "no_answer_message": "",       // optional static "no info" reply
-  "top_k": null,                 // retrieval overrides (null = server default; 1–20, else 400)
-  "similarity_threshold": null   // null = server default; must be 0.0–1.0, else 400
+  "top_k": null,                 // retrieval overrides (null = server default)
+  "similarity_threshold": null
 }
 ```
 Grounding/safety rules are server-enforced and **not** configurable.
@@ -607,12 +827,7 @@ Self-service account management for the authenticated user. Build a "Settings"
 page from these.
 
 ### Get my profile — `GET /users/me/`
-Returns the current user: `{ id, username, email, email_verified, first_name, last_name, role, api_key, plan, is_active, date_joined }`.
-
-> `plan` is an **admin-only** field: it holds the tenant's monthly token
-> allowance (`{ name, tokens_limit, tokens_used, tokens_remaining }`, see §11)
-> when the viewer is staff, and is `null` for a normal user viewing their own
-> profile — read your own usage from `GET /my-subscription/` (§7) instead.
+Returns the current user: `{ id, username, email, email_verified, first_name, last_name, role, api_key, is_active, date_joined }`.
 
 > `email_verified` is `false` until the user confirms their email. New accounts
 > verify at signup via the activation link (§2, which also flips `is_active` to
@@ -701,9 +916,24 @@ Errors return JSON `{ "detail": "..." }` (or field errors for 400 validation).
 | `401` | Missing/expired token | Refresh token (§2) or send to login. |
 | `402` | Out of credits, or subscription expired | Show an **upgrade / top-up** CTA (see credits below). |
 | `403` | Tenant suspended / not allowed | Show "account suspended / no access". |
+| `404` | Not found — or not yours | Treat as not found; never reveal another tenant's data. |
 | `413` | Document/storage quota exceeded | Tell the user to delete docs or upgrade. |
 | `429` | Rate limit or monthly token budget hit | Back off / show "try again shortly". |
 | `503` | RAG backend unavailable (LLM/provider) | Show "service busy, retry". |
+
+### Rate limits (the `429`s you can actually hit)
+
+Only these endpoints are throttled; everything else is limited by the tenant's
+per-minute request cap (`quota.max_requests_per_min`, §7).
+
+| Endpoint | Limit |
+|---|---|
+| `POST /auth/login/` | 10/min |
+| `POST /auth/register/` | 5/min |
+| `POST /chat/` | 60/min |
+| `POST /sync-api-content/`, `POST /crawl-website/` | 10/min (shared) |
+
+Back off and retry; these are per-IP/tenant and reset within the minute.
 
 Example handling:
 ```js
@@ -730,25 +960,27 @@ Require an **admin** token. Highlights:
   stays active.
 - `POST /users/{id}/resend-activation/` — re-send the activation link to an
   inactive user (first email failed, or the link expired).
-- `GET /users/` (and `GET /users/{id}/`) — list/read tenants. Each user object
-  includes its masked `api_key` **and** a `plan` object with the tenant's monthly
-  **token** allowance for the current period (admin viewers only):
-  ```json
-  "plan": {
-    "name": "Pro",            // plan name, or "Free tier"
-    "tokens_limit": 2000000,  // monthly token cap; 0 = unlimited
-    "tokens_used": 15230,     // tokens consumed this month
-    "tokens_remaining": 1984770  // null when unlimited (tokens_limit = 0)
-  }
-  ```
-  `plan` is `null` for non-admin viewers (a user reads their own usage from
-  `GET /my-subscription/`).
+- `GET /users/` — list tenants (each includes its `api_key`).
 - `POST /users/{id}/regenerate-api-key/` — rotate a user's key (admin only; users can't rotate their own).
 - `POST /users/{id}/set-password/` — admin resets a user's password.
 - `PATCH /users/{id}/` — update a tenant. Deactivating (`is_active: false`) a
   normal user works; deactivating a **staff/admin** account is refused (**`400`**,
   "Admin/staff accounts cannot be deactivated") so an admin can't lock themselves
   out. (Recovery if it ever happens on the server: `python manage.py reactivate_admin`.)
+- `DELETE /users/{id}/` — delete a tenant and everything they own (documents,
+  knowledge, API key, subscription — cascading, with no undo). Two deletions are
+  refused with **`400`**, for the same reason the deactivation above is:
+  | You try to delete | Result |
+  |---|---|
+  | an ordinary tenant | `204` — gone |
+  | **your own account** | `400` "You cannot delete your own account." |
+  | **another admin/staff account** | `400` "Admin/staff accounts cannot be deleted." |
+
+  Neither case is recoverable through the API — the role can't be granted back
+  and the data is gone — so an admin account that genuinely must be removed is
+  removed from the Django admin. In the UI, hide or disable the delete button on
+  the current user's row and on any row whose `role` is `admin`, rather than
+  letting the request fail.
 - `GET /api-keys/`, `POST /api-keys/{id}/revoke|activate|regenerate/` — key control.
 
 **Per-user feature control (admin) — turn features on/off for a specific tenant:**
@@ -814,4 +1046,19 @@ async function api(path, { method = "GET", body, isForm } = {}) {
 await api("/auth/login/", { method: "POST", body: { username, password } });
 await api("/chat/", { method: "POST", body: { question: "مرحبا", history: [] } });
 await api("/documents/");
+
+// Review and fix what the bot learned — a whole source, as one page:
+const { sources } = await api("/knowledge/sources/");
+const doc = sources.file[0];
+const page = await api(`/knowledge/sources/${doc.id}/`);
+await api(`/knowledge/sources/${doc.id}/`, {
+  method: "PUT",
+  body: { content: page.content.replace("30 days", "14 days") },
+});
+// ...or one piece at a time (and the only way for API-synced sources):
+const { results } = await api("/knowledge/?search=refund");
+await api(`/knowledge/${results[0].id}/`, {
+  method: "PATCH",
+  body: { content: "Refunds are processed within 14 days." },
+});
 ```
