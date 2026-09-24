@@ -82,16 +82,29 @@ export default function UsersPage() {
   const NextIcon = dir === 'rtl' ? ChevronLeft : ChevronRight
 
   /**
-   * Why this user cannot be deleted, or null when they can be. The API refuses
-   * both cases with 400 (FRONTEND_API.md §11): deleting cascades through a
-   * tenant's documents, knowledge, key and subscription with no undo, and
-   * neither an admin deleting themselves nor an admin deleting the last other
-   * admin can be put right from inside the product afterwards.
+   * Why this row cannot be administered, or null when it can be. Admin is one
+   * flat role, so the API refuses every action that would let one admin take
+   * over another's account -- set their password, read the key that
+   * authenticates as them, edit the email their resets go to (403,
+   * FRONTEND_API.md §11). Your own account is always yours.
    */
+  function managementBlockedReason(u: User): string | null {
+    if (me && u.id === me.id) return null
+    return u.role === 'admin' ? t('admin.users.action.blockedAdmin') : null
+  }
+
+  /** Deleting also cascades and cannot be undone, so your own row is out too. */
   function deleteBlockedReason(u: User): string | null {
     if (me && u.id === me.id) return t('admin.users.action.delete.blockedSelf')
-    if (u.role === 'admin') return t('admin.users.action.delete.blockedAdmin')
-    return null
+    return managementBlockedReason(u)
+  }
+
+  /** Deactivating your own admin account would lock you out of the system. */
+  function toggleActiveBlockedReason(u: User): string | null {
+    if (u.role === 'admin' && u.is_active && me && u.id === me.id) {
+      return t('admin.users.action.deactivate.blocked')
+    }
+    return managementBlockedReason(u)
   }
 
   function fullName(u: User) {
@@ -200,36 +213,40 @@ export default function UsersPage() {
                             label={t('admin.users.action.resendActivation')}
                             onClick={() => resendActivation.mutate(u.id)}
                             busy={resendActivation.isPending && resendActivation.variables === u.id}
+                            disabled={managementBlockedReason(u) !== null}
                             className="text-steel-500 hover:bg-steel-500/10"
                           >
                             <MailCheck className="size-4" />
                           </IconAction>
                         )}
                         <IconAction
-                          label={t('admin.users.action.features')}
+                          label={managementBlockedReason(u) ?? t('admin.users.action.features')}
                           onClick={() => setFeaturesUser(u)}
+                          // Every feature is on for an admin regardless, so the
+                          // dialog would only look like it does something.
+                          disabled={managementBlockedReason(u) !== null}
                           className="text-steel-500 hover:bg-steel-500/10"
                         >
                           <SlidersHorizontal className="size-4" />
                         </IconAction>
                         <IconAction
-                          label={t('admin.users.action.setPassword')}
+                          label={managementBlockedReason(u) ?? t('admin.users.action.setPassword')}
                           onClick={() => setPwUser(u)}
+                          // Setting a colleague's password is taking over their
+                          // account; the API answers 403.
+                          disabled={managementBlockedReason(u) !== null}
                         >
                           <KeyRound className="size-4" />
                         </IconAction>
                         <IconAction
                           label={
-                            u.role === 'admin' && u.is_active
-                              ? t('admin.users.action.deactivate.blocked')
-                              : u.is_active
-                                ? t('admin.users.action.deactivate')
-                                : t('admin.users.action.activate')
+                            toggleActiveBlockedReason(u) ??
+                            (u.is_active
+                              ? t('admin.users.action.deactivate')
+                              : t('admin.users.action.activate'))
                           }
                           onClick={() => toggleActive.mutate(u)}
-                          // The API refuses to deactivate an admin: nobody could
-                          // grant the role back, so the last one in would be out.
-                          disabled={u.role === 'admin' && u.is_active}
+                          disabled={toggleActiveBlockedReason(u) !== null}
                           busy={toggleActive.isPending && toggleActive.variables?.id === u.id}
                           className={u.is_active ? 'text-success' : 'text-faint'}
                         >

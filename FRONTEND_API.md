@@ -963,24 +963,40 @@ Require an **admin** token. Highlights:
 - `GET /users/` — list tenants (each includes its `api_key`).
 - `POST /users/{id}/regenerate-api-key/` — rotate a user's key (admin only; users can't rotate their own).
 - `POST /users/{id}/set-password/` — admin resets a user's password.
-- `PATCH /users/{id}/` — update a tenant. Deactivating (`is_active: false`) a
-  normal user works; deactivating a **staff/admin** account is refused (**`400`**,
-  "Admin/staff accounts cannot be deactivated") so an admin can't lock themselves
-  out. (Recovery if it ever happens on the server: `python manage.py reactivate_admin`.)
+- `PATCH /users/{id}/` — update a tenant. Deactivating (`is_active: false`) your
+  own admin account is refused (**`400`**, "Admin/staff accounts cannot be
+  deactivated") so an admin can't lock themselves out. (Recovery if it ever
+  happens on the server: `python manage.py reactivate_admin`.)
 - `DELETE /users/{id}/` — delete a tenant and everything they own (documents,
-  knowledge, API key, subscription — cascading, with no undo). Two deletions are
-  refused with **`400`**, for the same reason the deactivation above is:
-  | You try to delete | Result |
-  |---|---|
-  | an ordinary tenant | `204` — gone |
-  | **your own account** | `400` "You cannot delete your own account." |
-  | **another admin/staff account** | `400` "Admin/staff accounts cannot be deleted." |
+  knowledge, API key, subscription — cascading, with no undo). Deleting **your
+  own account** is refused with **`400`**.
 
-  Neither case is recoverable through the API — the role can't be granted back
-  and the data is gone — so an admin account that genuinely must be removed is
-  removed from the Django admin. In the UI, hide or disable the delete button on
-  the current user's row and on any row whose `role` is `admin`, rather than
-  letting the request fail.
+### Admins cannot manage other admins
+
+**Admin is one flat role** — every admin reaches every endpoint in this section.
+So anything that would let one admin take over another's account is refused with
+**`403`** "Admin accounts can only be managed by their owner":
+
+| Endpoint | On a tenant | On another admin | On yourself |
+|---|---|---|---|
+| `PATCH /users/{id}/` | ✅ | **`403`** | ✅ |
+| `DELETE /users/{id}/` | ✅ | **`403`** | `400` |
+| `POST /users/{id}/set-password/` | ✅ | **`403`** | ✅ |
+| `GET /users/{id}/api-key/` | ✅ | **`403`** | ✅ |
+| `POST /users/{id}/regenerate-api-key/` | ✅ | **`403`** | ✅ |
+
+Two quieter places follow the same rule, by hiding rather than refusing:
+
+* `GET /users/` embeds each row's `api_key` — it is **`null`** for other admins
+  (a key authenticates as its owner, so printing it hands over the account).
+* `GET /api-keys/` and its `revoke`/`activate`/`regenerate` actions **do not list
+  other admins' keys at all**; those ids return **`404`**, like any id that isn't
+  yours.
+
+For the UI: disable these actions on rows whose `role` is `admin` (and delete on
+your own row), with the reason as the tooltip, rather than letting the call fail.
+An admin account that genuinely must be changed by someone else is changed from
+the Django admin.
 - `GET /api-keys/`, `POST /api-keys/{id}/revoke|activate|regenerate/` — key control.
 
 **Per-user feature control (admin) — turn features on/off for a specific tenant:**
