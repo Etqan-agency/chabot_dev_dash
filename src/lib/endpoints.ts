@@ -2,7 +2,7 @@
  * Typed endpoint functions, grouped by API area. Each returns parsed data.
  * Paths are relative to the API root (/api/v1/...) per api-docs.html.
  */
-import { http } from './api'
+import { getApiErrorStatus, http } from './api'
 import type {
   AddCreditsRequest,
   ApiKey,
@@ -292,6 +292,28 @@ function bulkStatusFor(err: unknown): BulkKnowledgeStatus {
   return 'error'
 }
 
+/**
+ * The source list, or [] when the tenant genuinely has no knowledge.
+ *
+ * An API that predates GET /knowledge/sources/ answers it with 404: the path
+ * falls through to /knowledge/{id}/ with id="sources". Shown as-is, an empty
+ * knowledge base read as "couldn't load". But a 404 is not proof of emptiness,
+ * so it is checked against the chunk list, which every API version serves:
+ * no chunks means nothing to show. Chunks without the sources endpoint means
+ * there IS content this page cannot open, and the original error stands rather
+ * than a false "empty".
+ */
+async function listSourcesOrEmpty() {
+  try {
+    return await knowledgeSourcesApi.list()
+  } catch (err) {
+    if (getApiErrorStatus(err) !== 404) throw err
+    const { count } = await chunksApi.list({ page_size: 1 })
+    if (count === 0) return []
+    throw err
+  }
+}
+
 export const chunksApi = {
   /** Search/list every knowledge chunk (filters: document, search, ordering=position|-updated_at). */
   list: (params?: ListParams) => http.get<Paginated<KnowledgeChunk>>(`${V1}/knowledge/`, { params }),
@@ -337,7 +359,7 @@ export const chunksApi = {
    * asked for).
    */
   full: async (documentId?: string): Promise<FullKnowledge> => {
-    const ids = documentId ? [documentId] : (await knowledgeSourcesApi.list()).map((s) => s.id)
+    const ids = documentId ? [documentId] : (await listSourcesOrEmpty()).map((s) => s.id)
     const settled = await Promise.all(
       ids.map((id) =>
         documentsApi
