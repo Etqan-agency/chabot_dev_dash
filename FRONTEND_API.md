@@ -700,6 +700,13 @@ Returns the tenant's own rollups + live quota:
 Admins can pass `?scope=all` for a per-tenant breakdown.
 
 ### Credits & plan — `GET /my-subscription/`
+
+> **`quotas_paused: true`** means usage limits are switched off server-side
+> for every account: no credits are charged, `credits.exempt` is `true` and
+> `questions_left` is `null`, every `usage.*_limit` is `0` and every
+> `*_remaining` is `null` — show **"Unlimited"**, not the free tier. Plan-gated
+> features (API sync, website crawl, API key) are on too (`GET /my-features/`
+> reports `source: "quotas_paused"`). Rate limits (§10) still apply.
 Every chat question costs **credits** (default **2 credits/question**). A
 free-tier tenant gets **100 credits per month (= 50 questions/month)** — the
 balance is automatically topped back up to 100 at the start of each calendar
@@ -710,6 +717,7 @@ month. When the balance can't cover a question, `POST /chat/` returns **`402`**
 {
   "subscription": { ... } | null,
   "on_free_tier": true,
+  "quotas_paused": false,
   "credits": { "balance": 96, "credits_per_question": 2, "exempt": false, "questions_left": 48 },
   "usage": { "documents_used": 1, "documents_limit": 1, "storage_mb_limit": 0.5, ... }
 }
@@ -924,7 +932,8 @@ Errors return JSON `{ "detail": "..." }` (or field errors for 400 validation).
 ### Rate limits (the `429`s you can actually hit)
 
 Only these endpoints are throttled; everything else is limited by the tenant's
-per-minute request cap (`quota.max_requests_per_min`, §7).
+per-minute request cap (`quota.max_requests_per_min`, §7). They apply even while
+`quotas_paused` is on.
 
 | Endpoint | Limit |
 |---|---|
@@ -932,6 +941,8 @@ per-minute request cap (`quota.max_requests_per_min`, §7).
 | `POST /auth/register/` | 5/min |
 | `POST /chat/` | 60/min |
 | `POST /sync-api-content/`, `POST /crawl-website/` | 10/min (shared) |
+| `POST /documents/`, `POST /documents/upload-word/`, `POST /documents/{id}/reindex/` | 30/min (shared) |
+| `POST /users/change-email/`, `POST /users/request-password-code/` | 5/min (shared) |
 
 Back off and retry; these are per-IP/tenant and reset within the minute.
 

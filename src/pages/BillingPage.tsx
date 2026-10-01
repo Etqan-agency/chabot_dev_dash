@@ -122,9 +122,11 @@ export default function BillingPage() {
                   <div className="mt-1 flex items-center gap-2">
                     <BadgeCheck className="size-5 text-brand-500" />
                     <span className="text-xl font-semibold text-fg">
-                      {sub.on_free_tier || !sub.subscription
-                        ? t('billing.current.freeTier')
-                        : sub.subscription.plan.name}
+                      {sub.quotas_paused
+                        ? t('credits.unlimitedAccess')
+                        : sub.on_free_tier || !sub.subscription
+                          ? t('billing.current.freeTier')
+                          : sub.subscription.plan.name}
                     </span>
                     {sub.subscription?.status && (
                       <Badge tone={sub.subscription.is_current ? 'success' : 'neutral'} dot>
