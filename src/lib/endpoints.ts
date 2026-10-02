@@ -256,10 +256,10 @@ export const treeLanguagesApi = {
         params: activeOnly ? { active: 1 } : undefined,
       })
       .then((d) => asList<TreeLanguage>(d)),
-  /** Admin — registers a language and generates its mirror. */
+  /** Adds a language to this tenant's tree → the whole tree is translated into it (background). */
   create: (code: string, name: string) =>
     http.post<TreeLanguage>(`${V1}/tree-languages/`, { code, name }),
-  /** Admin — cannot delete the canonical language (400). */
+  /** Removes one of this tenant's languages (global ones: admin only; canonical: 400). */
   remove: (code: string) => http.delete<void>(`${V1}/tree-languages/${code}/`),
 }
 

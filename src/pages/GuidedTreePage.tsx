@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   AlertTriangle,
@@ -60,6 +60,8 @@ export default function GuidedTreePage() {
   const languages = useQuery({
     queryKey: ['tree-languages'],
     queryFn: () => treeLanguagesApi.list(true),
+    // While a translation runs, poll so progress shows and the tree refreshes when it ends.
+    refetchInterval: (q) => (q.state.data?.some((l) => l.translating) ? 3000 : false),
   })
   const treeQuery = useQuery({
     queryKey: ['guided-tree', language ?? ''],
@@ -67,6 +69,15 @@ export default function GuidedTreePage() {
   })
 
   const invalidateTree = () => queryClient.invalidateQueries({ queryKey: ['guided-tree'] })
+
+  const translating = (languages.data ?? []).some((l) => l.translating)
+  const wasTranslating = useRef(false)
+  useEffect(() => {
+    if (wasTranslating.current && !translating) {
+      void queryClient.invalidateQueries({ queryKey: ['guided-tree'] })
+    }
+    wasTranslating.current = translating
+  }, [translating, queryClient])
 
   const remove = useMutation({
     mutationFn: (id: string) => guidedTreeApi.remove(id),
@@ -77,6 +88,7 @@ export default function GuidedTreePage() {
   })
   const retranslate = useMutation({
     mutationFn: () => guidedTreeApi.retranslate(language),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['tree-languages'] }),
   })
 
   const data = treeQuery.data
@@ -91,7 +103,7 @@ export default function GuidedTreePage() {
         description={t('tree.subtitle')}
         actions={
           <div className="flex flex-wrap items-center gap-2">
-            {isAdmin && (
+            {canAuthor && (
               <Button variant="outline" size="sm" onClick={() => setLangManagerOpen(true)}>
                 <Languages className="size-4" /> {t('tree.languages')}
               </Button>
@@ -145,6 +157,7 @@ export default function GuidedTreePage() {
                 active={language === l.code}
                 onClick={() => setLanguage(l.code)}
                 label={l.name}
+                busy={l.translating}
               />
             ))}
         </div>
@@ -248,10 +261,11 @@ export default function GuidedTreePage() {
         onConfirm={() => toDelete && remove.mutate(toDelete.id)}
         onClose={() => setToDelete(null)}
       />
-      {isAdmin && (
+      {canAuthor && (
         <LanguageManager
           open={langManagerOpen}
           canonical={canonical}
+          isAdmin={isAdmin}
           onClose={() => setLangManagerOpen(false)}
         />
       )}
@@ -263,21 +277,25 @@ function LangPill({
   active,
   onClick,
   label,
+  busy,
 }: {
   active: boolean
   onClick: () => void
   label: string
+  /** Translation into this language is running. */
+  busy?: boolean
 }) {
   return (
     <button
       onClick={onClick}
       className={cn(
-        'rounded-full border px-3.5 py-1.5 text-sm font-medium transition-colors',
+        'flex items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-sm font-medium transition-colors',
         active
           ? 'border-brand-400/60 bg-brand-500/10 text-brand-700 dark:text-brand-300'
           : 'border-border bg-surface text-muted hover:text-fg',
       )}
     >
+      {busy && <Spinner className="size-3" />}
       {label}
     </button>
   )
@@ -588,14 +606,36 @@ function NodeDialog({
   )
 }
 
-/** Admin: add/remove mirror languages. Deleting the canonical is refused (400). */
+/** Common target languages, offered as one-tap adds (code → the language's own name). */
+const QUICK_LANGUAGES: { code: string; name: string }[] = [
+  { code: 'en', name: 'English' },
+  { code: 'fr', name: 'Français' },
+  { code: 'es', name: 'Español' },
+  { code: 'tr', name: 'Türkçe' },
+  { code: 'ur', name: 'اردو' },
+  { code: 'fa', name: 'فارسی' },
+  { code: 'id', name: 'Bahasa Indonesia' },
+  { code: 'ms', name: 'Bahasa Melayu' },
+  { code: 'bn', name: 'বাংলা' },
+  { code: 'ru', name: 'Русский' },
+  { code: 'zh', name: '中文' },
+  { code: 'de', name: 'Deutsch' },
+]
+
+/**
+ * The tenant's translation languages: add one and the whole tree is translated
+ * into it in the background (progress polled); later questions follow on their
+ * own. Global languages (an admin's, for every account) only an admin removes.
+ */
 function LanguageManager({
   open,
   canonical,
+  isAdmin,
   onClose,
 }: {
   open: boolean
   canonical?: string
+  isAdmin: boolean
   onClose: () => void
 }) {
   const { t } = useI18n()
@@ -607,7 +647,11 @@ function LanguageManager({
     queryKey: ['tree-languages', 'all'],
     queryFn: () => treeLanguagesApi.list(false),
     enabled: open,
+    refetchInterval: (q) => (q.state.data?.some((l) => l.translating) ? 3000 : false),
   })
+  const list = (languages.data ?? []).filter((l) => l.code !== canonical)
+  const taken = new Set([canonical, ...list.map((l) => l.code)])
+  const quick = QUICK_LANGUAGES.filter((l) => !taken.has(l.code))
 
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: ['tree-languages'] })
@@ -615,7 +659,7 @@ function LanguageManager({
   }
 
   const add = useMutation({
-    mutationFn: () => treeLanguagesApi.create(code.trim().toLowerCase(), name.trim()),
+    mutationFn: (l: { code: string; name: string }) => treeLanguagesApi.create(l.code, l.name),
     onSuccess: () => {
       invalidate()
       setCode('')
@@ -626,6 +670,11 @@ function LanguageManager({
     mutationFn: (c: string) => treeLanguagesApi.remove(c),
     onSuccess: invalidate,
   })
+  // Some nodes failed to translate (they show the canonical text): translate this language again.
+  const retry = useMutation({
+    mutationFn: (c: string) => guidedTreeApi.retranslate(c),
+    onSuccess: invalidate,
+  })
 
   return (
     <Modal open={open} onClose={onClose} title={t('tree.languages.title')}>
@@ -634,65 +683,124 @@ function LanguageManager({
 
         {languages.isLoading ? (
           <Spinner className="mx-auto" />
+        ) : list.length === 0 ? (
+          <p className="rounded-lg border border-dashed border-border px-3.5 py-3 text-center text-sm text-muted">
+            {t('tree.languages.none')}
+          </p>
         ) : (
           <ul className="flex flex-col gap-2">
-            {(languages.data ?? []).map((l) => (
-              <li
-                key={l.code}
-                className="flex items-center justify-between gap-3 rounded-lg border border-border bg-surface2/60 px-3.5 py-2.5"
-              >
-                <span className="flex min-w-0 items-center gap-2">
-                  <code className="rounded bg-surface2 px-1.5 py-0.5 font-mono text-xs text-fg">
-                    <bdi dir="ltr">{l.code}</bdi>
-                  </code>
-                  <span className="truncate text-sm font-medium text-fg">{l.name}</span>
-                  {l.code === canonical && <Badge tone="brand">{t('tree.canonicalBadge')}</Badge>}
-                  {!l.is_active && <Badge tone="neutral">{t('common.inactive')}</Badge>}
-                </span>
-                {l.code !== canonical && (
-                  <button
-                    onClick={() => remove.mutate(l.code)}
-                    disabled={remove.isPending}
-                    className="rounded-md p-1.5 text-danger transition-colors hover:bg-danger/10 disabled:opacity-50"
-                    title={t('common.delete')}
-                    aria-label={t('common.delete')}
-                  >
-                    <Trash2 className="size-4" />
-                  </button>
-                )}
-              </li>
-            ))}
+            {list.map((l) => {
+              const total = l.total_nodes ?? 0
+              const done = Math.min(l.translated_nodes ?? 0, total)
+              return (
+                <li
+                  key={l.code}
+                  className="flex flex-col gap-2 rounded-lg border border-border bg-surface2/60 px-3.5 py-2.5"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="flex min-w-0 items-center gap-2">
+                      <code className="rounded bg-surface2 px-1.5 py-0.5 font-mono text-xs text-fg">
+                        <bdi dir="ltr">{l.code}</bdi>
+                      </code>
+                      <span className="truncate text-sm font-medium text-fg">{l.name}</span>
+                      {l.scope === 'global' && (
+                        <Badge tone="neutral">{t('tree.languages.global')}</Badge>
+                      )}
+                      {!l.is_active && <Badge tone="neutral">{t('common.inactive')}</Badge>}
+                    </span>
+                    {(l.scope !== 'global' || isAdmin) && (
+                      <button
+                        onClick={() => remove.mutate(l.code)}
+                        disabled={remove.isPending}
+                        className="rounded-md p-1.5 text-danger transition-colors hover:bg-danger/10 disabled:opacity-50"
+                        title={t('common.delete')}
+                        aria-label={t('common.delete')}
+                      >
+                        <Trash2 className="size-4" />
+                      </button>
+                    )}
+                  </div>
+                  {total > 0 && (
+                    <div className="flex items-center gap-2 text-xs text-muted">
+                      <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-surface">
+                        <div
+                          className="h-full rounded-full bg-brand-500 transition-all"
+                          style={{ width: `${(done / total) * 100}%` }}
+                        />
+                      </div>
+                      {l.translating && <Spinner className="size-3" />}
+                      <span className="shrink-0 tabular-nums">
+                        {l.translating && done < total
+                          ? t('tree.languages.translating')
+                          : t('tree.languages.progress', { done, total })}
+                      </span>
+                      {!l.translating && done < total && (
+                        <button
+                          onClick={() => retry.mutate(l.code)}
+                          disabled={retry.isPending}
+                          className="flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 font-medium text-brand-700 hover:bg-brand-500/10 disabled:opacity-50 dark:text-brand-300"
+                        >
+                          <RefreshCw className="size-3" /> {t('tree.languages.retry')}
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </li>
+              )
+            })}
           </ul>
+        )}
+
+        {quick.length > 0 && (
+          <div className="flex flex-col gap-2 border-t border-border pt-4">
+            <p className="text-xs font-medium text-muted">{t('tree.languages.quick')}</p>
+            <div className="flex flex-wrap gap-1.5">
+              {quick.map((l) => (
+                <button
+                  key={l.code}
+                  onClick={() => add.mutate(l)}
+                  disabled={add.isPending}
+                  className="flex items-center gap-1 rounded-full border border-border bg-surface px-3 py-1 text-sm text-fg transition-colors hover:border-brand-300 hover:text-brand-700 disabled:opacity-50 dark:hover:text-brand-400"
+                >
+                  <Plus className="size-3.5" /> {l.name}
+                </button>
+              ))}
+            </div>
+          </div>
         )}
 
         <form
           onSubmit={(e) => {
             e.preventDefault()
-            if (code.trim() && name.trim()) add.mutate()
+            if (code.trim() && name.trim())
+              add.mutate({ code: code.trim().toLowerCase(), name: name.trim() })
           }}
-          className="flex items-end gap-2 border-t border-border pt-4"
+          className="flex flex-col gap-2 border-t border-border pt-4"
         >
-          <div className="w-24">
-            <Input
-              label={t('tree.languages.code')}
-              value={code}
-              onChange={(e) => setCode(e.target.value)}
-              placeholder="en"
-              dir="ltr"
-              maxLength={8}
-            />
+          <p className="text-xs font-medium text-muted">{t('tree.languages.custom')}</p>
+          <div className="flex items-end gap-2">
+            <div className="w-24">
+              <Input
+                label={t('tree.languages.code')}
+                value={code}
+                onChange={(e) => setCode(e.target.value)}
+                placeholder="en"
+                dir="ltr"
+                maxLength={10}
+              />
+            </div>
+            <div className="flex-1">
+              <Input
+                label={t('tree.languages.name')}
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder={t('tree.languages.namePlaceholder')}
+              />
+            </div>
+            <Button type="submit" loading={add.isPending} disabled={!code.trim() || !name.trim()}>
+              <Plus className="size-4" /> {t('common.add')}
+            </Button>
           </div>
-          <div className="flex-1">
-            <Input
-              label={t('tree.languages.name')}
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder={t('tree.languages.namePlaceholder')}
-            />
-          </div>
-          <Button type="submit" loading={add.isPending} disabled={!code.trim() || !name.trim()}>
-            <Plus className="size-4" /> {t('common.add')}
-          </Button>
         </form>
         {(add.isError || remove.isError) && (
           <div className="rounded-lg border border-danger/30 bg-danger/5 px-3 py-2 text-sm text-danger">

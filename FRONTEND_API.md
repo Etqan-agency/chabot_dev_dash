@@ -386,8 +386,9 @@ private/internal URLs (**`400`**).
 A tappable tree of questions for a guided chatbot: pick a language → show root
 questions → tap one → show its answer and/or child questions to drill into.
 **Multilingual with one canonical language** (default Arabic): you author only the
-canonical tree; every other active language is generated automatically as a
-**positional mirror** (translated in the background). All scoped to the tenant.
+canonical tree; every other language is generated automatically as a
+**positional mirror**, translated by the LLM (OpenAI) in the background. Each
+tenant picks its own languages. All scoped to the tenant.
 
 **Read the tree (public, any authenticated tenant, cached ~5 min):**
 ```
@@ -398,13 +399,24 @@ GET /guided-tree/?language=en        # omit language → canonical
 ```
 Tap a node = descend into its `children`; show `answer` if present.
 
-**Languages:**
+**Languages (per tenant):**
 ```
-GET  /tree-languages/            → [ { id, code, name, is_active } ]   (?active=1 to filter)
-GET  /tree-languages/?active=1
-POST /tree-languages/            { "code": "en", "name": "English" }   (admin) → generates the mirror
-DELETE /tree-languages/{code}/                                         (admin; NOT the canonical one → 400)
+GET  /tree-languages/            (?active=1 to filter)
+→ [ { id, code, name, is_active,
+      scope: "account" | "global",       # yours, or one an admin added for every tenant
+      translated_nodes, total_nodes,     # progress: nodes in this language / in the canonical tree
+      translating } ]                    # true while a background translation is running
+POST /tree-languages/            { "code": "en", "name": "English" }   → 201, translates the WHOLE tree into it
+DELETE /tree-languages/{code}/                                         → 204, removes it + its translated tree
 ```
+- Any tenant adds/removes **its own** languages (`scope: "account"`). Adding one
+  translates the whole tree in the background; poll `GET /tree-languages/` and
+  show `translated_nodes / total_nodes` until `translating` is `false`.
+- After that, **every new or edited question is translated into all of the
+  tenant's languages automatically** — only what changed is re-translated.
+- `global` languages apply to every tenant and are admin-only
+  (`POST { …, "global": true }` / `DELETE` → `403` for non-admins). Adding a code
+  that is already global → `400`. The canonical language can't be added or removed (`400`).
 
 **Authoring (writes always hit the canonical language; mirrors follow async):**
 ```
@@ -412,15 +424,18 @@ POST   /guided-tree/             { "title", "answer"?, "parent"? (id), "order"?,
 PATCH  /guided-tree/{id}/        { "title"?, "answer"?, "order"?, "is_active"? }   (edit via ANY language node → resolves to canonical)
 DELETE /guided-tree/{id}/                                              (removes every language mirror too)
 GET    /guided-tree/flat/?language=ar                                  (flat dump for an admin editor)
-POST   /guided-tree/retranslate/ { "language"? }                       (rebuild one/all mirror languages) → 202
+POST   /guided-tree/retranslate/ { "language"? }                       (re-translate one/all languages from scratch) → 202
 ```
 
 Notes:
 - `order` must be **unique among siblings** — omit it to auto-append; a clash returns **`400`**.
 - Edits/additions **don't block** on translation; re-fetch the mirror tree a moment later.
 - Deleting or reordering refreshes the affected languages automatically.
+- Translation happens **in place**: while a language is being (re)translated it
+  keeps serving its previous tree, never an empty one. A node whose translation
+  failed shows the canonical text and is retried on the next change or `retranslate`.
 - **Feature-gated.** Reading the tree is always allowed, but **authoring** it
-  (`POST`/`PATCH`/`DELETE /guided-tree/`, `retranslate`) returns **`402`** when the
+  (`POST`/`PATCH`/`DELETE /guided-tree/`, `retranslate`, `POST /tree-languages/`) returns **`402`** when the
   `guided_tree` feature is off for the tenant (see §11). Check `/my-features/` to
   show/hide the authoring UI.
 

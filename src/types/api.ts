@@ -407,6 +407,13 @@ export interface TreeLanguage {
   code: string
   name: string
   is_active: boolean
+  /** "account" = this tenant added it; "global" = an admin added it for every tenant. */
+  scope?: 'account' | 'global'
+  /** Progress: nodes translated into this language / nodes in the canonical tree. */
+  translated_nodes?: number
+  total_nodes?: number
+  /** True while a background translation of this tenant's tree is running. */
+  translating?: boolean
 }
 
 /** Writes always target the canonical language; mirrors follow async. */

@@ -5,10 +5,13 @@ import { cn } from '@/lib/cn'
 export function ChatComposer({
   onSend,
   disabled,
+  locked,
   placeholder = 'Type a message',
 }: {
   onSend: (text: string) => void
   disabled?: boolean
+  /** No typing at all (e.g. the guided-questions mode); `disabled` only blocks sending. */
+  locked?: boolean
   placeholder?: string
 }) {
   const [value, setValue] = useState('')
@@ -24,7 +27,7 @@ export function ChatComposer({
 
   function submit() {
     const text = value.trim()
-    if (!text || disabled) return
+    if (!text || disabled || locked) return
     onSend(text)
     setValue('')
   }
@@ -41,7 +44,7 @@ export function ChatComposer({
     }
   }
 
-  const canSend = value.trim().length > 0 && !disabled
+  const canSend = value.trim().length > 0 && !disabled && !locked
 
   return (
     <form onSubmit={handleSubmit} className="flex items-end gap-2 px-3 py-2.5 sm:px-4">
@@ -55,15 +58,16 @@ export function ChatComposer({
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder={placeholder}
+          disabled={locked}
           dir="auto"
-          className="max-h-30 flex-1 resize-none bg-transparent py-1.5 text-[15px] text-fg placeholder:text-faint focus:outline-none focus-visible:ring-0 focus-visible:ring-offset-0"
+          className="max-h-30 flex-1 resize-none bg-transparent disabled:cursor-not-allowed py-1.5 text-[15px] text-fg placeholder:text-faint focus:outline-none focus-visible:ring-0 focus-visible:ring-offset-0"
         />
       </div>
 
       {/* Round send / mic button */}
       <button
         type="submit"
-        disabled={disabled}
+        disabled={disabled || locked}
         aria-label={canSend ? 'Send' : 'Voice message'}
         className={cn(
           'flex size-11 shrink-0 items-center justify-center rounded-full text-navy-900 transition-all active:scale-95 disabled:opacity-60',

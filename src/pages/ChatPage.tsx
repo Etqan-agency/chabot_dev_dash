@@ -1,12 +1,23 @@
 import { useEffect, useRef, useState } from 'react'
-import { Sparkles, Trash2 } from 'lucide-react'
+import { Languages, ListTree, MessageSquareText, Sparkles, Trash2 } from 'lucide-react'
 import { VideoAvatar } from '@/components/chat/VideoAvatar'
 import { MessageBubble } from '@/components/chat/MessageBubble'
 import { ThinkingBubble } from '@/components/chat/ThinkingBubble'
 import { ChatComposer } from '@/components/chat/ChatComposer'
-import { GuidedQuestions } from '@/components/chat/GuidedQuestions'
+import { GuidedOptions } from '@/components/chat/GuidedQuestions'
 import { useI18n } from '@/hooks/useI18n'
 import { useChatSession } from '@/hooks/useChatSession'
+import { useGuidedTree } from '@/hooks/useGuidedTree'
+import { cn } from '@/lib/cn'
+
+/** A language's own name for itself ("العربية", "English"), falling back to the code. */
+function nativeName(code: string): string {
+  try {
+    return new Intl.DisplayNames([code], { type: 'language' }).of(code) ?? code
+  } catch {
+    return code
+  }
+}
 
 export default function ChatPage() {
   const { t } = useI18n()
@@ -21,8 +32,16 @@ export default function ChatPage() {
     assistantName,
     company,
   } = useChatSession()
-  // Bumped on "clear" so the guided questions return to the root too.
-  const [resetKey, setResetKey] = useState(0)
+  const guided = useGuidedTree()
+  // Guided ("common questions") by default when the tenant has a tree, like the end-user bot.
+  const [chosenMode, setMode] = useState<'guided' | 'chat' | null>(null)
+  const mode = guided.hasTree ? (chosenMode ?? 'guided') : 'chat'
+  const languageChoices = guided.canonical
+    ? [
+        { code: guided.canonical, name: nativeName(guided.canonical) },
+        ...guided.languages.filter((l) => l.code !== guided.canonical),
+      ]
+    : []
   const scrollRef = useRef<HTMLDivElement>(null)
   const suggestions = [t('chat.suggest.1'), t('chat.suggest.2'), t('chat.suggest.3')]
 
@@ -35,7 +54,7 @@ export default function ChatPage() {
 
   useEffect(() => {
     scrollToBottom('smooth')
-  }, [messages, loading])
+  }, [messages, loading, guided.options])
 
   const isEmpty = messages.length === 0
 
@@ -106,7 +125,7 @@ export default function ChatPage() {
           <button
             onClick={() => {
               clear()
-              setResetKey((k) => k + 1)
+              guided.home()
             }}
             className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-muted transition-colors hover:bg-surface2 hover:text-fg"
           >
@@ -120,7 +139,7 @@ export default function ChatPage() {
         ref={scrollRef}
         className="relative z-10 flex-1 space-y-4 overflow-y-auto px-3 py-5 sm:px-5"
       >
-        {isEmpty ? (
+        {isEmpty && mode === 'chat' ? (
           <div className="flex h-full flex-col items-center justify-center text-center">
             <div className="animate-float-y">
               <VideoAvatar className="size-24" glow />
@@ -145,11 +164,20 @@ export default function ChatPage() {
           </div>
         ) : (
           <>
-            <div className="flex justify-center">
-              <span className="rounded-md bg-surface/80 px-3 py-1 text-[11px] font-medium text-muted shadow-sm backdrop-blur">
-                {t('chat.today')}
-              </span>
-            </div>
+            {isEmpty ? (
+              <div className="flex flex-col items-center pt-4 text-center">
+                <VideoAvatar className="size-16" glow />
+                <h2 className="mt-3 text-lg font-bold text-fg">
+                  {t('chat.empty.title', { name: assistantName })}
+                </h2>
+              </div>
+            ) : (
+              <div className="flex justify-center">
+                <span className="rounded-md bg-surface/80 px-3 py-1 text-[11px] font-medium text-muted shadow-sm backdrop-blur">
+                  {t('chat.today')}
+                </span>
+              </div>
+            )}
             {messages.map((turn) => (
               <MessageBubble
                 key={turn.id}
@@ -160,18 +188,70 @@ export default function ChatPage() {
               />
             ))}
             {loading && <ThinkingBubble />}
+            {mode === 'guided' && (
+              <GuidedOptions
+                options={guided.options}
+                atRoot={guided.atRoot}
+                disabled={loading}
+                onPick={(node) => {
+                  guidedReply(node.title, node.answer)
+                  guided.pick(node)
+                }}
+                onHome={guided.home}
+              />
+            )}
           </>
         )}
       </div>
 
       {/* Composer */}
       <div className="relative z-10 border-t border-border bg-surface/80 backdrop-blur">
-        <GuidedQuestions
-          onPick={(node) => guidedReply(node.title, node.answer)}
-          resetKey={resetKey}
+        {guided.hasTree && (
+          <div className="flex flex-wrap items-center justify-center gap-2 px-3 pt-2.5">
+            {(
+              [
+                ['guided', ListTree, 'chat.mode.guided'],
+                ['chat', MessageSquareText, 'chat.mode.ask'],
+              ] as const
+            ).map(([m, Icon, key]) => (
+              <button
+                key={m}
+                onClick={() => setMode(m)}
+                className={cn(
+                  'flex items-center gap-1.5 rounded-full border px-4 py-1.5 text-sm font-medium transition-colors',
+                  mode === m
+                    ? 'border-brand-400 bg-brand-50 text-brand-700 dark:bg-brand-500/15 dark:text-brand-300'
+                    : 'border-border bg-surface text-muted hover:text-fg',
+                )}
+              >
+                <Icon className="size-3.5" /> {t(key)}
+              </button>
+            ))}
+            {mode === 'guided' && languageChoices.length > 1 && (
+              <label className="flex items-center gap-1.5 text-xs text-muted">
+                <Languages className="size-3.5" />
+                <select
+                  value={guided.language ?? ''}
+                  onChange={(e) => guided.setLanguage(e.target.value)}
+                  aria-label={t('chat.guided.language')}
+                  className="rounded-md border border-border bg-surface px-2 py-1 text-xs text-fg"
+                >
+                  {languageChoices.map((l) => (
+                    <option key={l.code} value={l.code}>
+                      {l.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+          </div>
+        )}
+        <ChatComposer
+          onSend={send}
           disabled={loading}
+          locked={mode === 'guided'}
+          placeholder={t(mode === 'guided' ? 'chat.guided.placeholder' : 'chat.placeholder')}
         />
-        <ChatComposer onSend={send} disabled={loading} placeholder={t('chat.placeholder')} />
       </div>
     </div>
   )
