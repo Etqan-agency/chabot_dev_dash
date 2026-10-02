@@ -12,7 +12,10 @@ function newId(): string {
 }
 
 function nowTime(): string {
-  return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  return new Date().toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+  })
 }
 
 /**
@@ -66,11 +69,38 @@ export function useChatSession() {
     } catch (err) {
       setMessages((m) => [
         ...m,
-        { id: newId(), role: 'assistant', content: getApiErrorMessage(err), error: true },
+        {
+          id: newId(),
+          role: 'assistant',
+          content: getApiErrorMessage(err),
+          error: true,
+        },
       ])
     } finally {
       setLoading(false)
     }
+  }
+
+  /** A guided-tree tap: the question as the user's turn, its stored answer (if any) as the reply. */
+  function guidedReply(question: string, answer?: string) {
+    const time = nowTime()
+    setMessages((m) => [
+      ...m,
+      { id: newId(), role: 'user', content: question, time },
+      ...(answer?.trim()
+        ? [
+            {
+              id: newId(),
+              role: 'assistant' as const,
+              content: answer,
+              question,
+              guided: true,
+              time,
+              animate: true,
+            },
+          ]
+        : []),
+    ])
   }
 
   function handleFeedback(turn: ChatTurn, rating: FeedbackRating) {
@@ -102,6 +132,7 @@ export function useChatSession() {
     messages,
     loading,
     send,
+    guidedReply,
     handleFeedback,
     handleTyped,
     clear,

@@ -1,21 +1,36 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Sparkles, Trash2 } from 'lucide-react'
 import { VideoAvatar } from '@/components/chat/VideoAvatar'
 import { MessageBubble } from '@/components/chat/MessageBubble'
 import { ThinkingBubble } from '@/components/chat/ThinkingBubble'
 import { ChatComposer } from '@/components/chat/ChatComposer'
+import { GuidedQuestions } from '@/components/chat/GuidedQuestions'
 import { useI18n } from '@/hooks/useI18n'
 import { useChatSession } from '@/hooks/useChatSession'
 
 export default function ChatPage() {
   const { t } = useI18n()
-  const { messages, loading, send, handleFeedback, handleTyped, clear, assistantName, company } =
-    useChatSession()
+  const {
+    messages,
+    loading,
+    send,
+    guidedReply,
+    handleFeedback,
+    handleTyped,
+    clear,
+    assistantName,
+    company,
+  } = useChatSession()
+  // Bumped on "clear" so the guided questions return to the root too.
+  const [resetKey, setResetKey] = useState(0)
   const scrollRef = useRef<HTMLDivElement>(null)
   const suggestions = [t('chat.suggest.1'), t('chat.suggest.2'), t('chat.suggest.3')]
 
   function scrollToBottom(behavior: ScrollBehavior = 'smooth') {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior })
+    scrollRef.current?.scrollTo({
+      top: scrollRef.current.scrollHeight,
+      behavior,
+    })
   }
 
   useEffect(() => {
@@ -89,7 +104,10 @@ export default function ChatPage() {
         </div>
         {!isEmpty && (
           <button
-            onClick={clear}
+            onClick={() => {
+              clear()
+              setResetKey((k) => k + 1)
+            }}
             className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-muted transition-colors hover:bg-surface2 hover:text-fg"
           >
             <Trash2 className="size-3.5" /> {t('chat.clear')}
@@ -136,7 +154,7 @@ export default function ChatPage() {
               <MessageBubble
                 key={turn.id}
                 turn={turn}
-                onFeedback={handleFeedback}
+                onFeedback={turn.guided ? undefined : handleFeedback}
                 onType={() => scrollToBottom('auto')}
                 onTyped={handleTyped}
               />
@@ -148,6 +166,11 @@ export default function ChatPage() {
 
       {/* Composer */}
       <div className="relative z-10 border-t border-border bg-surface/80 backdrop-blur">
+        <GuidedQuestions
+          onPick={(node) => guidedReply(node.title, node.answer)}
+          resetKey={resetKey}
+          disabled={loading}
+        />
         <ChatComposer onSend={send} disabled={loading} placeholder={t('chat.placeholder')} />
       </div>
     </div>

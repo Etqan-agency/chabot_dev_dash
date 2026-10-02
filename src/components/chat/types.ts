@@ -18,4 +18,6 @@ export interface ChatTurn {
   /** True when this assistant turn represents a failed request. */
   error?: boolean
   feedback?: FeedbackRating | null
+  /** Answered from the guided question tree, not the RAG chat (no feedback). */
+  guided?: boolean
 }
