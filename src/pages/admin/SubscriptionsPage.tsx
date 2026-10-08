@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { AlertTriangle, BadgeCheck, Check, Coins, Plus, X } from 'lucide-react'
+import { AlertTriangle, BadgeCheck, Check, Coins, Plus, RotateCcw, X } from 'lucide-react'
 import { PageHeader } from '@/components/PageHeader'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
@@ -11,8 +11,9 @@ import { Modal } from '@/components/ui/Modal'
 import { Spinner } from '@/components/ui/Spinner'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { plansApi, subscriptionsApi, usersApi } from '@/lib/endpoints'
-import { getApiErrorMessage } from '@/lib/api'
-import { formatDate } from '@/lib/format'
+import { getApiErrorMessage, getApiErrorStatus } from '@/lib/api'
+import { formatDate, fullNumber, pointsNumber } from '@/lib/format'
+import { cn } from '@/lib/cn'
 import { useI18n } from '@/hooks/useI18n'
 import type { Subscription } from '@/types/api'
 
@@ -20,7 +21,8 @@ export default function SubscriptionsPage() {
   const { t } = useI18n()
   const [page, setPage] = useState(1)
   const [assignOpen, setAssignOpen] = useState(false)
-  const [creditsOpen, setCreditsOpen] = useState(false)
+  const [pointsOpen, setPointsOpen] = useState(false)
+  const [toRenew, setToRenew] = useState<Subscription | null>(null)
 
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ['subscriptions', { page }],
@@ -41,8 +43,8 @@ export default function SubscriptionsPage() {
         description={t('admin.subs.subtitle')}
         actions={
           <>
-            <Button variant="outline" onClick={() => setCreditsOpen(true)}>
-              <Coins className="size-4" /> {t('admin.subs.addCredits')}
+            <Button variant="outline" onClick={() => setPointsOpen(true)}>
+              <Coins className="size-4" /> {t('admin.subs.addPoints')}
             </Button>
             <Button onClick={() => setAssignOpen(true)}>
               <Plus className="size-4" /> {t('admin.subs.assign')}
@@ -77,14 +79,16 @@ export default function SubscriptionsPage() {
           />
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[720px] text-sm">
+            <table className="w-full min-w-[920px] text-sm">
               <thead>
                 <tr className="border-b border-border text-start text-xs uppercase tracking-wide text-muted">
                   <th className="px-5 py-3 text-start font-semibold">{t('admin.subs.col.user')}</th>
                   <th className="px-5 py-3 text-start font-semibold">{t('admin.subs.col.plan')}</th>
                   <th className="px-5 py-3 text-start font-semibold">{t('admin.subs.col.status')}</th>
+                  <th className="px-5 py-3 text-start font-semibold">{t('admin.subs.col.points')}</th>
                   <th className="px-5 py-3 text-start font-semibold">{t('admin.subs.col.period')}</th>
                   <th className="px-5 py-3 text-start font-semibold">{t('admin.subs.col.renew')}</th>
+                  <th className="px-5 py-3 text-end font-semibold">{t('admin.subs.col.actions')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -96,9 +100,18 @@ export default function SubscriptionsPage() {
                     <td className="px-5 py-3 font-medium text-fg">{s.username ?? '—'}</td>
                     <td className="px-5 py-3 text-muted">{planName(s)}</td>
                     <td className="px-5 py-3">
-                      <Badge tone={s.is_current ? 'success' : 'neutral'} dot>
-                        {s.status ?? (s.is_current ? t('common.active') : t('common.inactive'))}
-                      </Badge>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <Badge tone={s.is_current ? 'success' : 'neutral'} dot>
+                          {s.status ?? (s.is_current ? t('common.active') : t('common.inactive'))}
+                        </Badge>
+                        {s.renewal_reason && <ReasonBadge reason={s.renewal_reason} />}
+                      </div>
+                    </td>
+                    <td className="px-5 py-3">
+                      <PointsCell
+                        balance={s.points_balance}
+                        allowance={s.points_allowance ?? s.plan?.points}
+                      />
                     </td>
                     <td className="px-5 py-3 whitespace-nowrap text-muted">
                       {s.current_period_end ? formatDate(s.current_period_end) : '—'}
@@ -108,6 +121,14 @@ export default function SubscriptionsPage() {
                         <Check className="size-4 text-success" />
                       ) : (
                         <X className="size-4 text-faint" />
+                      )}
+                    </td>
+                    <td className="px-5 py-3 text-end">
+                      {/* Renewable only once expired or out of points (the API 409s otherwise). */}
+                      {s.can_renew && (
+                        <Button size="sm" onClick={() => setToRenew(s)}>
+                          <RotateCcw className="size-4" /> {t('admin.subs.renew')}
+                        </Button>
                       )}
                     </td>
                   </tr>
@@ -140,16 +161,142 @@ export default function SubscriptionsPage() {
       </Card>
 
       <AssignDialog open={assignOpen} onClose={() => setAssignOpen(false)} />
-      <AddCreditsDialog open={creditsOpen} onClose={() => setCreditsOpen(false)} />
+      <AddPointsDialog open={pointsOpen} onClose={() => setPointsOpen(false)} />
+      <RenewDialog subscription={toRenew} onClose={() => setToRenew(null)} />
     </div>
   )
 }
 
-function AddCreditsDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+/** Why the subscription needs renewing: expired / out of points. */
+function ReasonBadge({ reason }: { reason: 'expired' | 'points_exhausted' }) {
+  const { t } = useI18n()
+  return (
+    <Badge tone={reason === 'expired' ? 'warning' : 'danger'}>
+      {t(`admin.subs.reason.${reason}`)}
+    </Badge>
+  )
+}
+
+/** Points balance vs the plan's allowance, with a small bar. */
+function PointsCell({ balance, allowance }: { balance?: number; allowance?: number }) {
+  if (balance == null) return <span className="text-faint">—</span>
+  const max = allowance ?? 0
+  const ratio = max > 0 ? Math.min(Math.max(balance / max, 0), 1) : 0
+  return (
+    <div className="min-w-[140px]">
+      <p className="whitespace-nowrap tabular-nums text-fg">
+        {pointsNumber(balance)}
+        {max > 0 && <span className="text-muted"> / {fullNumber(max)}</span>}
+      </p>
+      {max > 0 && (
+        <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-surface2">
+          <div
+            className={cn(
+              'h-full rounded-full',
+              ratio <= 0.1 ? 'bg-danger' : ratio <= 0.3 ? 'bg-brand-500' : 'bg-success',
+            )}
+            style={{ width: `${ratio * 100}%` }}
+          />
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** Admin renewal: restarts the period now and resets points to the plan's allowance. */
+function RenewDialog({
+  subscription,
+  onClose,
+}: {
+  subscription: Subscription | null
+  onClose: () => void
+}) {
+  const { t } = useI18n()
+  const queryClient = useQueryClient()
+  const [duration, setDuration] = useState('')
+
+  const renew = useMutation({
+    mutationFn: (id: string) => {
+      const days = Math.round(Number(duration))
+      return subscriptionsApi.renew(id, days > 0 ? { duration_days: days } : {})
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['subscriptions'] })
+      void queryClient.invalidateQueries({ queryKey: ['my-subscription'] })
+      handleClose()
+    },
+  })
+
+  function handleClose() {
+    setDuration('')
+    renew.reset()
+    onClose()
+  }
+
+  const s = subscription
+  const allowance = s?.points_allowance ?? s?.plan?.points ?? 0
+
+  return (
+    <Modal
+      open={!!s}
+      onClose={handleClose}
+      title={t('admin.subs.renew.title')}
+      size="sm"
+      footer={
+        <>
+          <Button variant="ghost" onClick={handleClose} disabled={renew.isPending}>
+            {t('common.cancel')}
+          </Button>
+          <Button
+            onClick={() => s && renew.mutate(s.id)}
+            disabled={duration.trim() !== '' && !(Math.round(Number(duration)) > 0)}
+            loading={renew.isPending}
+          >
+            <RotateCcw className="size-4" /> {t('admin.subs.renew')}
+          </Button>
+        </>
+      }
+    >
+      <div className="flex flex-col gap-4">
+        {s?.renewal_reason && (
+          <div>
+            <ReasonBadge reason={s.renewal_reason} />
+          </div>
+        )}
+        <p className="text-sm text-muted">
+          {t('admin.subs.renew.message', {
+            plan: s?.plan?.name ?? s?.plan_name ?? '—',
+            user: s?.username ?? '—',
+            n: fullNumber(allowance),
+          })}
+        </p>
+        <Input
+          label={t('admin.subs.renew.duration')}
+          type="number"
+          min={1}
+          step={1}
+          value={duration}
+          onChange={(e) => setDuration(e.target.value)}
+          hint={t('admin.subs.renew.durationHint')}
+        />
+        {renew.isError && (
+          <div className="rounded-lg border border-danger/30 bg-danger/5 px-3 py-2 text-sm text-danger">
+            {getApiErrorStatus(renew.error) === 409
+              ? t('admin.subs.renew.notRenewable')
+              : getApiErrorMessage(renew.error)}
+          </div>
+        )}
+      </div>
+    </Modal>
+  )
+}
+
+/** Manual points correction: adds whole points to a tenant's current balance. */
+function AddPointsDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { t } = useI18n()
   const queryClient = useQueryClient()
   const [userId, setUserId] = useState('')
-  const [credits, setCredits] = useState('100')
+  const [amount, setAmount] = useState('100')
 
   const { data: users } = useQuery({
     queryKey: ['users', { page: 1, ordering: 'username' }],
@@ -158,7 +305,8 @@ function AddCreditsDialog({ open, onClose }: { open: boolean; onClose: () => voi
   })
 
   const add = useMutation({
-    mutationFn: () => subscriptionsApi.addCredits({ user: userId, amount: Number(credits) || 0 }),
+    mutationFn: () =>
+      subscriptionsApi.addPoints({ user: userId, amount: Math.round(Number(amount)) || 0 }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['subscriptions'] })
       void queryClient.invalidateQueries({ queryKey: ['my-subscription'] })
@@ -168,7 +316,7 @@ function AddCreditsDialog({ open, onClose }: { open: boolean; onClose: () => voi
 
   function handleClose() {
     setUserId('')
-    setCredits('100')
+    setAmount('100')
     add.reset()
     onClose()
   }
@@ -182,7 +330,7 @@ function AddCreditsDialog({ open, onClose }: { open: boolean; onClose: () => voi
     <Modal
       open={open}
       onClose={handleClose}
-      title={t('admin.subs.addCredits.title')}
+      title={t('admin.subs.addPoints.title')}
       footer={
         <>
           <Button variant="ghost" onClick={handleClose} disabled={add.isPending}>
@@ -190,10 +338,10 @@ function AddCreditsDialog({ open, onClose }: { open: boolean; onClose: () => voi
           </Button>
           <Button
             onClick={() => add.mutate()}
-            disabled={!userId || !(Number(credits) > 0)}
+            disabled={!userId || !(Math.round(Number(amount)) > 0)}
             loading={add.isPending}
           >
-            {t('admin.subs.addCredits.submit')}
+            {t('admin.subs.addPoints.submit')}
           </Button>
         </>
       }
@@ -203,11 +351,13 @@ function AddCreditsDialog({ open, onClose }: { open: boolean; onClose: () => voi
           <Select options={userOptions} value={userId} onChange={(e) => setUserId(e.target.value)} />
         </Field>
         <Input
-          label={t('admin.subs.addCredits.amount')}
+          label={t('admin.subs.addPoints.amount')}
           type="number"
           min={1}
-          value={credits}
-          onChange={(e) => setCredits(e.target.value)}
+          step={1}
+          value={amount}
+          onChange={(e) => setAmount(e.target.value)}
+          hint={t('admin.subs.addPoints.hint')}
         />
         {add.isError && (
           <div className="rounded-lg border border-danger/30 bg-danger/5 px-3 py-2 text-sm text-danger">

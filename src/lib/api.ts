@@ -45,6 +45,10 @@ function knownMessageKey(raw: string, field = ''): string | null {
   const m = raw.toLowerCase()
   const f = field.toLowerCase()
 
+  // Points billing (402): out of points / subscription expired → contact the admin.
+  if (m.includes('out of points')) return 'error.outOfPoints'
+  if (m.includes('subscription has expired')) return 'error.subscriptionExpired'
+
   if (m.includes('no active account') || m.includes('invalid credentials'))
     return 'error.invalidCredentials'
   if (m.includes('token') && (m.includes('not valid') || m.includes('invalid') || m.includes('expired')))
@@ -168,6 +172,19 @@ api.interceptors.response.use(
   },
 )
 
+/**
+ * The localized-message key when an error is a points-billing stop (402 "out of
+ * points" / "subscription expired"), else null — lets pages tell it apart from
+ * a feature that simply isn't on the plan.
+ */
+export function getBillingErrorKey(error: unknown): string | null {
+  if (!axios.isAxiosError(error) || error.response?.status !== 402) return null
+  const data = error.response.data as ApiErrorBody | string | undefined
+  const raw = typeof data === 'string' ? data : (data?.detail ?? '')
+  const key = knownMessageKey(raw)
+  return key === 'error.outOfPoints' || key === 'error.subscriptionExpired' ? key : null
+}
+
 /** HTTP status of an API error, or undefined (network failure / not an API error). */
 export function getApiErrorStatus(error: unknown): number | undefined {
   return axios.isAxiosError(error) ? error.response?.status : undefined
@@ -208,7 +225,7 @@ export function getApiErrorMessage(error: unknown, fallbackKey = 'error.generic'
 
     // 2) Status-based friendly localized fallback.
     const byStatus: Record<number, string> = {
-      402: 'error.subscriptionExpired',
+      402: 'error.planRequired',
       403: 'error.forbidden',
       404: 'error.notFound',
       413: 'error.quota',

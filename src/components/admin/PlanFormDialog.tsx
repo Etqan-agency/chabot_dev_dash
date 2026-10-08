@@ -5,19 +5,26 @@ import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { plansApi } from '@/lib/endpoints'
 import { getApiErrorMessage } from '@/lib/api'
+import { fullNumber } from '@/lib/format'
 import { useI18n } from '@/hooks/useI18n'
 import type { Plan, PlanInput } from '@/types/api'
 
-// Editable fields only — credits and the token cap are auto-derived from
-// `questions` server-side, so the form never asks for them.
+// 25% of the price covers OpenAI cost and 1 point = $0.001 → price × 250 points.
+const POINTS_PER_USD = 250
+
+function suggestedPoints(price: string): number {
+  const usd = Number(price)
+  return Number.isFinite(usd) && usd > 0 ? Math.round(usd * POINTS_PER_USD) : 0
+}
+
+// Editable fields only. Billing is manual, so the Paddle price id isn't edited here.
 function toForm(plan?: Plan | null): Record<string, string> {
   return {
     name: plan?.name ?? '',
     price_usd: plan?.price_usd ?? '0.00',
-    questions: String(plan?.questions ?? plan?.monthly_questions ?? 500),
+    points: String(plan?.points ?? 0),
     max_documents: String(plan?.max_documents ?? 25),
     max_total_mb: String(plan?.max_total_mb ?? 50),
-    paddle_price_id: plan?.paddle_price_id ?? '',
     is_active: plan?.is_active === false ? '' : 'on',
     allow_api_sync: plan?.allow_api_sync ? 'on' : '',
   }
@@ -36,9 +43,13 @@ export function PlanFormDialog({
   const { t } = useI18n()
   const queryClient = useQueryClient()
   const [form, setForm] = useState<Record<string, string>>(() => toForm(plan))
+  // On a new plan, points follow the price suggestion until the admin edits them.
+  const [pointsTouched, setPointsTouched] = useState(!!plan)
 
   useEffect(() => {
-    if (open) setForm(toForm(plan))
+    if (!open) return
+    setForm(toForm(plan))
+    setPointsTouched(!!plan)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, plan?.id])
 
@@ -46,15 +57,24 @@ export function PlanFormDialog({
     setForm((f) => ({ ...f, [key]: value }))
   }
 
+  function setPrice(value: string) {
+    setForm((f) => ({
+      ...f,
+      price_usd: value,
+      ...(pointsTouched ? {} : { points: String(suggestedPoints(value)) }),
+    }))
+  }
+
+  const suggested = suggestedPoints(form.price_usd)
+
   const save = useMutation({
     mutationFn: () => {
       const body: PlanInput = {
         name: form.name.trim(),
         price_usd: form.price_usd.trim() || '0.00',
-        questions: Number(form.questions) || 0,
+        points: Math.max(0, Math.round(Number(form.points) || 0)),
         max_documents: Number(form.max_documents) || 0,
         max_total_mb: Number(form.max_total_mb) || 0,
-        paddle_price_id: form.paddle_price_id.trim(),
         is_active: form.is_active === 'on',
         allow_api_sync: form.allow_api_sync === 'on',
       }
@@ -100,18 +120,33 @@ export function PlanFormDialog({
           <Input
             label={t('admin.plans.f.price')}
             value={form.price_usd}
-            onChange={(e) => set('price_usd', e.target.value)}
+            onChange={(e) => setPrice(e.target.value)}
             inputMode="decimal"
           />
         </div>
-        <Input
-          label={t('admin.plans.f.questions')}
-          type="number"
-          min={0}
-          value={form.questions}
-          onChange={(e) => set('questions', e.target.value)}
-          hint={t('admin.plans.f.questionsHint')}
-        />
+        <div className="flex flex-col gap-1.5">
+          <Input
+            label={t('admin.plans.f.points')}
+            type="number"
+            min={0}
+            step={1}
+            value={form.points}
+            onChange={(e) => {
+              setPointsTouched(true)
+              set('points', e.target.value)
+            }}
+            hint={t('admin.plans.f.pointsHint', { n: fullNumber(suggested) })}
+          />
+          {suggested > 0 && String(suggested) !== form.points && (
+            <button
+              type="button"
+              onClick={() => set('points', String(suggested))}
+              className="self-start text-xs font-medium text-brand-700 hover:underline dark:text-brand-300"
+            >
+              {t('admin.plans.f.useSuggested')} · {fullNumber(suggested)}
+            </button>
+          )}
+        </div>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Input
             label={t('admin.plans.f.maxDocuments')}
@@ -128,14 +163,6 @@ export function PlanFormDialog({
             onChange={(e) => set('max_total_mb', e.target.value)}
           />
         </div>
-        <Input
-          label={t('admin.plans.f.paddlePriceId')}
-          value={form.paddle_price_id}
-          onChange={(e) => set('paddle_price_id', e.target.value)}
-          placeholder="pri_..."
-          dir="ltr"
-          hint={t('admin.plans.f.paddlePriceId.hint')}
-        />
 
         <div className="flex flex-wrap gap-x-6 gap-y-2">
           <label className="flex cursor-pointer items-center gap-2.5">

@@ -21,7 +21,7 @@ import NotFoundPage from '@/pages/NotFoundPage'
 
 // Chat pulls in the markdown renderer — load it only when visited.
 const ChatPage = lazy(() => import('@/pages/ChatPage'))
-// Billing pulls in Paddle checkout glue — load on demand.
+// Billing (plan catalog + points history) — load on demand.
 const BillingPage = lazy(() => import('@/pages/BillingPage'))
 // Public marketing site — standalone page, loaded on demand.
 const MarketingPage = lazy(() => import('@/pages/MarketingPage'))

@@ -1,43 +1,30 @@
-import { useEffect, useRef, useState } from 'react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
-import {
-  AlertTriangle,
-  BadgeCheck,
-  Check,
-  Coins,
-  CreditCard,
-  MessageCircleQuestion,
-  RefreshCw,
-  Sparkles,
-} from 'lucide-react'
+import { useState } from 'react'
+import { keepPreviousData, useQuery } from '@tanstack/react-query'
+import { AlertTriangle, BadgeCheck, Check, Coins, CreditCard, History, Info } from 'lucide-react'
 import { PageHeader } from '@/components/PageHeader'
 import { Card } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
+import { Select } from '@/components/ui/Select'
 import { Spinner } from '@/components/ui/Spinner'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { QuotaBar } from '@/components/QuotaBar'
 import { plansApi, subscriptionsApi } from '@/lib/endpoints'
 import { getApiErrorMessage } from '@/lib/api'
-import { onPaddleEvent, openPaddleCheckout, paddleConfigured } from '@/lib/paddle'
-import { formatDate, fullNumber, usd } from '@/lib/format'
+import { formatDate, fullNumber, pointsNumber, usd } from '@/lib/format'
 import { cn } from '@/lib/cn'
-import { useAuth } from '@/hooks/useAuth'
 import { useI18n } from '@/hooks/useI18n'
-import type { Plan } from '@/types/api'
+
+/** Operation kinds a points charge can belong to (filterable in the history). */
+const POINT_KINDS = ['chat', 'document', 'knowledge', 'crawl', 'api_sync', 'translation'] as const
 
 /**
- * Billing & plans (FRONTEND_API.md §7): current plan + credits, the active
- * plan catalog, and self-serve upgrade via Paddle Checkout. Fulfillment is
- * async (webhook) — after checkout completes we re-fetch /my-subscription/.
+ * Billing & plans: current plan + points balance, the active plan catalog
+ * and the points history. Billing is manual — the admin assigns and renews
+ * plans, so there is no checkout here.
  */
 export default function BillingPage() {
   const { t } = useI18n()
-  const { user } = useAuth()
-  const queryClient = useQueryClient()
-  const [checkoutError, setCheckoutError] = useState(false)
-  const [fulfilling, setFulfilling] = useState(false)
-  const timers = useRef<ReturnType<typeof setTimeout>[]>([])
 
   const mySub = useQuery({
     queryKey: ['my-subscription'],
@@ -49,44 +36,14 @@ export default function BillingPage() {
     queryFn: () => plansApi.list({ ordering: 'sort_order' }),
   })
 
-  // Payment is fulfilled server-side via the Paddle webhook — poll the
-  // subscription a couple of times after checkout closes (per the docs).
-  useEffect(() => {
-    onPaddleEvent((name) => {
-      if (name !== 'checkout.completed') return
-      setFulfilling(true)
-      const refetch = () =>
-        void queryClient.invalidateQueries({ queryKey: ['my-subscription'] })
-      timers.current.push(setTimeout(refetch, 3000))
-      timers.current.push(
-        setTimeout(() => {
-          refetch()
-          setFulfilling(false)
-        }, 9000),
-      )
-    })
-    const pending = timers.current
-    return () => pending.forEach(clearTimeout)
-  }, [queryClient])
-
-  async function upgrade(plan: Plan) {
-    if (!user || !plan.paddle_price_id) return
-    setCheckoutError(false)
-    try {
-      await openPaddleCheckout({
-        priceId: plan.paddle_price_id,
-        email: user.email,
-        userId: user.id,
-      })
-    } catch {
-      setCheckoutError(true)
-    }
-  }
-
   const sub = mySub.data
+  const pts = sub?.points
   const currentPlanId = sub?.subscription?.plan?.id
   const currentPlanName = sub?.subscription?.plan?.name
   const activePlans = (plans.data?.results ?? []).filter((p) => p.is_active)
+  // Stopped until the admin renews: period over, or fewer than 1 point left.
+  const stopReason =
+    sub?.renewal_reason ?? (pts && !pts.exempt && pts.exhausted ? 'points_exhausted' : null)
 
   return (
     <div>
@@ -98,21 +55,15 @@ export default function BillingPage() {
         </div>
       ) : (
         <div className="flex flex-col gap-6">
-          {fulfilling && (
-            <div className="flex items-center gap-2 rounded-xl border border-brand-300/40 bg-brand-50 px-4 py-3 text-sm text-brand-700 dark:bg-brand-500/10 dark:text-brand-300">
-              <RefreshCw className="size-4 shrink-0 animate-spin" />
-              {t('billing.checkout.processing')}
-            </div>
-          )}
-          {checkoutError && (
+          {stopReason && (
             <div className="flex items-center gap-2 rounded-xl border border-danger/30 bg-danger/5 px-4 py-3 text-sm text-danger">
               <AlertTriangle className="size-4 shrink-0" />
-              {t('billing.checkout.error')}
+              {t(stopReason === 'expired' ? 'points.expired' : 'points.exhausted')}
             </div>
           )}
 
-          {/* Current plan + credits */}
-          {sub && (
+          {/* Current plan + points */}
+          {sub && pts && (
             <Card className="p-6">
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div>
@@ -142,26 +93,46 @@ export default function BillingPage() {
                       )}
                     </p>
                   )}
+                  {sub.on_free_tier && !pts.exempt && (
+                    <p className="mt-1 text-sm text-muted">
+                      {t('points.freeTierNote', { n: fullNumber(pts.allowance) })}
+                    </p>
+                  )}
                 </div>
-                <div className="flex gap-6">
-                  <Stat
-                    icon={Coins}
-                    label={t('credits.balance', { n: fullNumber(sub.credits.balance) })}
-                    sub={t('credits.perQuestion', { n: sub.credits.credits_per_question })}
-                  />
-                  <Stat
-                    icon={MessageCircleQuestion}
-                    label={
-                      sub.credits.exempt || sub.credits.questions_left == null
-                        ? t('credits.unlimited')
-                        : t('credits.questionsLeft', {
-                            n: fullNumber(sub.credits.questions_left),
-                          })
-                    }
-                    sub={t('credits.title')}
-                  />
+                <div className="flex items-center gap-3">
+                  <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-brand-500/10 text-brand-500">
+                    <Coins className="size-5" />
+                  </span>
+                  <div>
+                    <p className="font-semibold text-fg">
+                      {pts.exempt
+                        ? t('points.unlimited')
+                        : t('points.ofAllowance', {
+                            n: pointsNumber(pts.balance),
+                            total: fullNumber(pts.allowance),
+                          })}
+                    </p>
+                    <p className="text-xs text-muted">
+                      {pts.exempt
+                        ? t('points.exemptNote')
+                        : t('points.used', { n: pointsNumber(pts.used) })}
+                    </p>
+                  </div>
                 </div>
               </div>
+
+              {!pts.exempt && pts.allowance > 0 && (
+                <div className="mt-5 border-t border-border pt-5">
+                  <QuotaBar
+                    label={t('points.title')}
+                    used={pts.used}
+                    max={pts.allowance}
+                    formatValue={pointsNumber}
+                    unlimitedLabel={t('points.unlimited')}
+                  />
+                  <p className="mt-2 text-xs text-muted">{t('points.explainer')}</p>
+                </div>
+              )}
 
               {(sub.usage.documents_limit != null || sub.usage.storage_mb_limit != null) && (
                 <div className="mt-5 grid grid-cols-1 gap-4 border-t border-border pt-5 sm:grid-cols-2">
@@ -169,14 +140,14 @@ export default function BillingPage() {
                     label={t('billing.usage.documents')}
                     used={sub.usage.documents_used ?? 0}
                     max={sub.usage.documents_limit ?? 0}
-                    unlimitedLabel={t('credits.unlimited')}
+                    unlimitedLabel={t('points.unlimited')}
                   />
                   <QuotaBar
                     label={t('billing.usage.storage')}
                     used={sub.usage.storage_mb_used ?? 0}
                     max={sub.usage.storage_mb_limit ?? 0}
                     unit=" MB"
-                    unlimitedLabel={t('credits.unlimited')}
+                    unlimitedLabel={t('points.unlimited')}
                   />
                 </div>
               )}
@@ -188,6 +159,11 @@ export default function BillingPage() {
               {t('billing.loadError')}: {getApiErrorMessage(mySub.error)}
             </div>
           )}
+
+          <div className="flex items-start gap-2 rounded-xl border border-steel-500/30 bg-steel-500/5 px-4 py-3 text-sm text-steel-600 dark:text-steel-300">
+            <Info className="mt-0.5 size-4 shrink-0" />
+            {t('billing.manualNote')}
+          </div>
 
           {/* Plan catalog */}
           <section>
@@ -209,7 +185,6 @@ export default function BillingPage() {
                   const isCurrent =
                     plan.id === currentPlanId ||
                     (!!currentPlanName && plan.name === currentPlanName)
-                  const canCheckout = paddleConfigured && !!plan.paddle_price_id
                   return (
                     <Card
                       key={plan.id}
@@ -236,12 +211,7 @@ export default function BillingPage() {
 
                       <ul className="mt-4 flex flex-col gap-2 text-sm text-fg">
                         <Feature>
-                          {t('billing.plans.questions', {
-                            n:
-                              (plan.questions ?? plan.monthly_questions ?? 0) > 0
-                                ? fullNumber(plan.questions ?? plan.monthly_questions ?? 0)
-                                : '∞',
-                          })}
+                          {t('billing.plans.points', { n: fullNumber(plan.points ?? 0) })}
                         </Feature>
                         <Feature>
                           {t('billing.plans.documents', {
@@ -261,10 +231,6 @@ export default function BillingPage() {
                           <Button variant="outline" className="w-full" disabled>
                             <Check className="size-4" /> {t('billing.plans.current')}
                           </Button>
-                        ) : canCheckout ? (
-                          <Button className="w-full" onClick={() => void upgrade(plan)}>
-                            <Sparkles className="size-4" /> {t('billing.plans.upgrade')}
-                          </Button>
                         ) : (
                           <p className="rounded-lg border border-border bg-surface2 px-3 py-2 text-center text-xs text-muted">
                             {t('billing.plans.contactAdmin')}
@@ -277,31 +243,155 @@ export default function BillingPage() {
               </div>
             )}
           </section>
+
+          <PointsHistory />
         </div>
       )}
     </div>
   )
 }
 
-function Stat({
-  icon: Icon,
-  label,
-  sub,
-}: {
-  icon: typeof Coins
-  label: string
-  sub: string
-}) {
+/** Paged list of points charges (GET /points-history/), newest first. */
+function PointsHistory() {
+  const { t } = useI18n()
+  const [page, setPage] = useState(1)
+  const [kind, setKind] = useState('')
+
+  const { data, isLoading, isError, error } = useQuery({
+    queryKey: ['points-history', { page, kind }],
+    queryFn: () => subscriptionsApi.pointsHistory({ page, kind: kind || undefined }),
+    placeholderData: keepPreviousData,
+  })
+  const rows = data?.results ?? []
+
+  const kindLabel = (k: string) => {
+    const key = `points.kind.${k}`
+    const label = t(key)
+    return label === key ? k : label
+  }
+  const kindOptions = [
+    { value: '', label: t('points.history.allKinds') },
+    ...POINT_KINDS.map((k) => ({ value: k, label: kindLabel(k) })),
+  ]
+
   return (
-    <div className="flex items-center gap-3">
-      <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-brand-500/10 text-brand-500">
-        <Icon className="size-5" />
-      </span>
-      <div>
-        <p className="font-semibold text-fg">{label}</p>
-        <p className="text-xs text-muted">{sub}</p>
+    <section>
+      <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h2 className="flex items-center gap-2 text-lg font-semibold text-fg">
+            <History className="size-5 text-muted" /> {t('points.history.title')}
+          </h2>
+          <p className="text-sm text-muted">{t('points.history.desc')}</p>
+        </div>
+        <div className="w-52">
+          <Select
+            options={kindOptions}
+            value={kind}
+            onChange={(e) => {
+              setKind(e.target.value)
+              setPage(1)
+            }}
+            aria-label={t('points.history.col.kind')}
+          />
+        </div>
       </div>
-    </div>
+
+      <Card className="overflow-hidden">
+        {isLoading ? (
+          <div className="flex items-center justify-center py-16">
+            <Spinner className="size-6" />
+          </div>
+        ) : isError ? (
+          <div className="flex items-center gap-3 p-6 text-sm text-danger">
+            <AlertTriangle className="size-5 shrink-0" />
+            <div>
+              <p className="font-medium">{t('points.history.loadError')}</p>
+              <p className="text-muted">{getApiErrorMessage(error)}</p>
+            </div>
+          </div>
+        ) : rows.length === 0 ? (
+          <EmptyState icon={History} title={t('points.history.empty')} />
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[640px] text-sm">
+              <thead>
+                <tr className="border-b border-border text-start text-xs uppercase tracking-wide text-muted">
+                  <th className="px-5 py-3 text-start font-semibold">
+                    {t('points.history.col.date')}
+                  </th>
+                  <th className="px-5 py-3 text-start font-semibold">
+                    {t('points.history.col.kind')}
+                  </th>
+                  <th className="px-5 py-3 text-start font-semibold">
+                    {t('points.history.col.model')}
+                  </th>
+                  <th className="px-5 py-3 text-start font-semibold">
+                    {t('points.history.col.tokens')}
+                  </th>
+                  <th className="px-5 py-3 text-end font-semibold">
+                    {t('points.history.col.points')}
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr
+                    key={r.id}
+                    className="border-b border-border/60 last:border-0 hover:bg-surface2/60"
+                  >
+                    <td className="px-5 py-3 whitespace-nowrap text-muted">
+                      {formatDate(r.created_at)}{' '}
+                      <span className="text-faint">
+                        {new Date(r.created_at).toLocaleTimeString([], {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}
+                      </span>
+                    </td>
+                    <td className="px-5 py-3 font-medium text-fg">{kindLabel(r.kind)}</td>
+                    <td className="px-5 py-3 text-muted">
+                      <bdi dir="ltr">{r.model || '—'}</bdi>
+                    </td>
+                    <td className="px-5 py-3 tabular-nums text-muted">
+                      <bdi dir="ltr">
+                        {fullNumber(r.tokens_in ?? 0)} / {fullNumber(r.tokens_out ?? 0)}
+                      </bdi>
+                    </td>
+                    <td className="px-5 py-3 text-end font-medium tabular-nums text-fg">
+                      {pointsNumber(Number(r.points) || 0)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {!isLoading && !isError && rows.length > 0 && (
+          <div className="flex items-center justify-end gap-2 border-t border-border px-5 py-3 text-sm text-muted">
+            <span className="me-auto tabular-nums">
+              {t('common.page')} {page}
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={!data?.previous}
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+            >
+              ‹
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={!data?.next}
+              onClick={() => setPage((p) => p + 1)}
+            >
+              ›
+            </Button>
+          </div>
+        )}
+      </Card>
+    </section>
   )
 }
 

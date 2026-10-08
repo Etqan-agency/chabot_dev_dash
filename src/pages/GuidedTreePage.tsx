@@ -5,6 +5,7 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  CirclePause,
   Eye,
   Languages,
   ListTree,
@@ -71,6 +72,8 @@ export default function GuidedTreePage() {
   const invalidateTree = () => queryClient.invalidateQueries({ queryKey: ['guided-tree'] })
 
   const translating = (languages.data ?? []).some((l) => l.translating)
+  // Translation waits for points when the tenant ran out (resumes after renewal).
+  const paused = (languages.data ?? []).some((l) => l.paused)
   const wasTranslating = useRef(false)
   useEffect(() => {
     if (wasTranslating.current && !translating) {
@@ -136,7 +139,7 @@ export default function GuidedTreePage() {
             to="/billing"
             className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-brand-500 px-3 text-sm font-semibold text-navy-900 shadow-sm transition-colors hover:bg-brand-400"
           >
-            {t('credits.upgradeCta')}
+            {t('points.contactCta')}
           </Link>
         </div>
       )}
@@ -157,7 +160,9 @@ export default function GuidedTreePage() {
                 active={language === l.code}
                 onClick={() => setLanguage(l.code)}
                 label={l.name}
-                busy={l.translating}
+                busy={l.translating && !l.paused}
+                paused={l.paused}
+                pausedLabel={t('tree.languages.paused')}
               />
             ))}
         </div>
@@ -187,6 +192,27 @@ export default function GuidedTreePage() {
         <div className="mb-4 flex items-center gap-2 rounded-xl border border-steel-500/30 bg-steel-500/5 px-4 py-2.5 text-sm text-steel-600 dark:text-steel-300">
           <Languages className="size-4 shrink-0" />
           {t('tree.mirrorNote', { lang: data.language, canonical: data.canonical_language })}
+        </div>
+      )}
+
+      {paused && (
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-danger/30 bg-danger/5 px-4 py-2.5">
+          <p className="flex items-center gap-2 text-sm text-danger">
+            <AlertTriangle className="size-4 shrink-0" />
+            {t('tree.languages.pausedNote')}
+          </p>
+          <Link
+            to="/billing"
+            className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border bg-surface px-3 text-sm font-medium text-fg transition-colors hover:bg-surface2"
+          >
+            {t('points.contactCta')}
+          </Link>
+        </div>
+      )}
+
+      {retranslate.isError && (
+        <div className="mb-4 rounded-xl border border-danger/30 bg-danger/5 px-4 py-2.5 text-sm text-danger">
+          {getApiErrorMessage(retranslate.error)}
         </div>
       )}
 
@@ -278,16 +304,22 @@ function LangPill({
   onClick,
   label,
   busy,
+  paused,
+  pausedLabel,
 }: {
   active: boolean
   onClick: () => void
   label: string
   /** Translation into this language is running. */
   busy?: boolean
+  /** Translation is waiting for points. */
+  paused?: boolean
+  pausedLabel?: string
 }) {
   return (
     <button
       onClick={onClick}
+      title={paused ? pausedLabel : undefined}
       className={cn(
         'flex items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-sm font-medium transition-colors',
         active
@@ -296,6 +328,7 @@ function LangPill({
       )}
     >
       {busy && <Spinner className="size-3" />}
+      {paused && <CirclePause className="size-3.5 text-danger" aria-label={pausedLabel} />}
       {label}
     </button>
   )
@@ -707,6 +740,7 @@ function LanguageManager({
                         <Badge tone="neutral">{t('tree.languages.global')}</Badge>
                       )}
                       {!l.is_active && <Badge tone="neutral">{t('common.inactive')}</Badge>}
+                      {l.paused && <Badge tone="danger">{t('tree.languages.paused')}</Badge>}
                     </span>
                     {(l.scope !== 'global' || isAdmin) && (
                       <button
@@ -728,13 +762,13 @@ function LanguageManager({
                           style={{ width: `${(done / total) * 100}%` }}
                         />
                       </div>
-                      {l.translating && <Spinner className="size-3" />}
+                      {l.translating && !l.paused && <Spinner className="size-3" />}
                       <span className="shrink-0 tabular-nums">
-                        {l.translating && done < total
+                        {l.translating && !l.paused && done < total
                           ? t('tree.languages.translating')
                           : t('tree.languages.progress', { done, total })}
                       </span>
-                      {!l.translating && done < total && (
+                      {!l.translating && !l.paused && done < total && (
                         <button
                           onClick={() => retry.mutate(l.code)}
                           disabled={retry.isPending}
@@ -802,9 +836,11 @@ function LanguageManager({
             </Button>
           </div>
         </form>
-        {(add.isError || remove.isError) && (
+        {(add.isError || remove.isError || retry.isError) && (
           <div className="rounded-lg border border-danger/30 bg-danger/5 px-3 py-2 text-sm text-danger">
-            {getApiErrorMessage(add.isError ? add.error : remove.error)}
+            {getApiErrorMessage(
+              add.isError ? add.error : remove.isError ? remove.error : retry.error,
+            )}
           </div>
         )}
       </div>

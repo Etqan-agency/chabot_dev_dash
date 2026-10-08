@@ -11,7 +11,7 @@ import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { PlanFormDialog } from '@/components/admin/PlanFormDialog'
 import { plansApi } from '@/lib/endpoints'
 import { getApiErrorMessage } from '@/lib/api'
-import { compactNumber, usd } from '@/lib/format'
+import { fullNumber, usd } from '@/lib/format'
 import { cn } from '@/lib/cn'
 import { useI18n } from '@/hooks/useI18n'
 import type { Plan } from '@/types/api'
@@ -37,7 +37,6 @@ export default function PlansPage() {
   })
 
   const plans = data?.results ?? []
-  const qty = (n: number) => (n === 0 ? t('common.unlimited') : compactNumber(n))
 
   function openCreate() {
     setEditing(null)
@@ -92,7 +91,7 @@ export default function PlansPage() {
                   <th className="px-5 py-3 text-start font-semibold">{t('admin.plans.col.name')}</th>
                   <th className="px-5 py-3 text-start font-semibold">{t('admin.plans.col.price')}</th>
                   <th className="px-5 py-3 text-start font-semibold">
-                    {t('admin.plans.col.questions')}
+                    {t('admin.plans.col.points')}
                   </th>
                   <th className="px-5 py-3 text-start font-semibold">
                     {t('admin.plans.col.limits')}
@@ -119,7 +118,7 @@ export default function PlansPage() {
                       {usd(Number(p.price_usd))}
                     </td>
                     <td className="px-5 py-3 tabular-nums text-muted">
-                      {qty(p.questions ?? p.monthly_questions ?? 0)}
+                      {fullNumber(p.points ?? 0)}
                     </td>
                     <td className="px-5 py-3 text-xs text-muted">
                       {t('admin.plans.docsShort', { n: p.max_documents })} ·{' '}

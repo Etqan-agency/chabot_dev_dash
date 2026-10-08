@@ -134,6 +134,10 @@ export interface ChatResponse {
   completion_tokens: number
   cost_usd: number
   sources: ChatSource[]
+  /** Points charged for this answer (1 point = $0.001 of OpenAI cost). */
+  points_used?: number
+  /** Remaining balance after the answer; null for staff (never charged). */
+  points_balance?: number | null
 }
 
 export type FeedbackRating = 'up' | 'down'
@@ -262,36 +266,35 @@ export interface Plan {
   slug: string
   description?: string
   price_usd: string
-  /** Chat questions the plan sells — the pricing metric. Credits & token cap derive from it. */
-  questions: number
-  included_credits?: number // derived server-side from `questions`
-  monthly_questions?: number // legacy alias of `questions`
-  monthly_token_cap?: number // derived server-side
+  /** Points granted per period (1 point = $0.001 of OpenAI cost). No rollover. */
+  points: number
+  /** Optional extra caps — 0 = off. */
+  monthly_questions?: number
+  monthly_token_cap?: number
   max_documents: number
   max_total_mb: number
   max_requests_per_min?: number
   allow_api_sync?: boolean
-  /** Paddle Billing price id — used by the frontend to open Paddle Checkout. */
+  /** Legacy Paddle price id — billing is manual now; not edited from the dashboard. */
   paddle_price_id?: string
   llm_model?: string
   is_active: boolean
   sort_order?: number
 }
 
-/**
- * Editable fields when creating/updating a plan. Credits and the token cap
- * are auto-derived from `questions` — never sent by the frontend.
- */
+/** Editable fields when creating/updating a plan. */
 export interface PlanInput {
   name: string
   price_usd: string
-  questions: number
+  points: number
   max_documents: number
   max_total_mb: number
   is_active: boolean
   allow_api_sync?: boolean
-  paddle_price_id?: string
 }
+
+/** Why a subscription needs an admin renewal (null = still running with points left). */
+export type RenewalReason = 'expired' | 'points_exhausted' | null
 
 export interface Subscription {
   id: UUID
@@ -304,6 +307,19 @@ export interface Subscription {
   current_period_end?: ISODateString
   is_current?: boolean
   auto_renew?: boolean
+  created_at?: ISODateString
+  /** Remaining points this period (fractional, 3 decimals). */
+  points_balance?: number
+  /** The plan's points per period. */
+  points_allowance?: number
+  /** True when expired or out of points — the admin may renew it. */
+  can_renew?: boolean
+  renewal_reason?: RenewalReason
+}
+
+/** Admin renewal (POST /subscriptions/{id}/renew/); default = previous period length. */
+export interface RenewSubscriptionRequest {
+  duration_days?: number
 }
 
 export interface AssignSubscriptionRequest {
@@ -313,23 +329,58 @@ export interface AssignSubscriptionRequest {
   auto_renew: boolean
 }
 
-/** Admin credit top-up (POST /subscriptions/add-credits/). */
-export interface AddCreditsRequest {
+/** Admin manual points correction (POST /subscriptions/add-points/). */
+export interface AddPointsRequest {
   user: UUID
+  /** Whole points. */
   amount: number
 }
 
-/** Credit balance for the caller (chat costs credits per question). */
-export interface CreditInfo {
+export interface AddPointsResponse {
+  user: UUID
+  points_balance: number
+}
+
+/** Points balance for the caller (1 point = $0.001 of real OpenAI cost). */
+export interface PointsInfo {
   balance: number
-  credits_per_question: number
-  /** Admin/staff never spend credits — `questions_left` is null; show "unlimited". */
-  exempt?: boolean
-  questions_left: number | null
+  allowance: number
+  used: number
+  /** Admin/staff are never charged — show "unlimited". */
+  exempt: boolean
+  /** Balance < 1 point — the account is stopped until the admin renews. */
+  exhausted: boolean
+  usd_per_point: number
+}
+
+/** Kind of OpenAI operation a points-history row was charged for. */
+export type PointsKind =
+  | 'chat'
+  | 'document'
+  | 'knowledge'
+  | 'crawl'
+  | 'api_sync'
+  | 'translation'
+  | 'embedding' // legacy
+  | 'analysis' // legacy
+
+/** One charge in GET /points-history/ (newest first). */
+export interface PointsHistoryRow {
+  id: UUID | number
+  kind: PointsKind | string
+  model: string
+  tokens_in: number
+  tokens_out: number
+  cost_usd: number | string
+  points: number
+  created_at: ISODateString
 }
 
 /** Live usage limits for the caller (GET /my-subscription/). */
 export interface SubscriptionUsage {
+  questions_used?: number
+  questions_limit?: number
+  questions_remaining?: number | null
   documents_used?: number
   documents_limit?: number
   storage_mb_used?: number
@@ -346,7 +397,9 @@ export interface MySubscription {
     is_current?: boolean
   } | null
   on_free_tier: boolean
-  credits: CreditInfo
+  points: PointsInfo
+  /** Why the account is stopped (null on the free tier or while running). */
+  renewal_reason: RenewalReason
   usage: SubscriptionUsage
 }
 
@@ -408,6 +461,8 @@ export interface TreeLanguage {
   total_nodes?: number
   /** True while a background translation of this tenant's tree is running. */
   translating?: boolean
+  /** True when translation is waiting for points (the tenant ran out). */
+  paused?: boolean
 }
 
 /** Writes always target the canonical language; mirrors follow async. */

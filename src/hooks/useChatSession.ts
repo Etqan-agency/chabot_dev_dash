@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { chatApi, configApi } from '@/lib/endpoints'
 import { getApiErrorMessage } from '@/lib/api'
 import type { ChatTurn, FeedbackRating } from '@/components/chat/types'
@@ -26,6 +26,7 @@ function nowTime(): string {
 export function useChatSession() {
   const [messages, setMessages] = useState<ChatTurn[]>([])
   const [loading, setLoading] = useState(false)
+  const queryClient = useQueryClient()
 
   const { data: config } = useQuery({
     queryKey: ['chatbot-config'],
@@ -78,6 +79,8 @@ export function useChatSession() {
       ])
     } finally {
       setLoading(false)
+      // Each answer spends points (or 402s when they're gone) — refresh the balance.
+      void queryClient.invalidateQueries({ queryKey: ['my-subscription'] })
     }
   }
 

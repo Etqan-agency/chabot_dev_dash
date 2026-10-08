@@ -11,7 +11,7 @@ import { EmptyState } from '@/components/ui/EmptyState'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { StatusBadge } from '@/components/documents/StatusBadge'
 import { documentsApi, syncApi } from '@/lib/endpoints'
-import { getApiErrorMessage, getApiErrorStatus } from '@/lib/api'
+import { getApiErrorMessage, getApiErrorStatus, getBillingErrorKey } from '@/lib/api'
 import { formatDate } from '@/lib/format'
 import { cn } from '@/lib/cn'
 import { useI18n } from '@/hooks/useI18n'
@@ -166,16 +166,16 @@ export default function ApiSyncPage() {
 
               {sync.isError &&
                 (getApiErrorStatus(sync.error) === 402 ? (
-                  // API sync is not on the free tier (§5) — steer to an upgrade.
+                  // 402: out of points / expired, or API sync isn't on the plan — contact the admin.
                   <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-brand-300/40 bg-brand-50 px-3 py-2.5 dark:bg-brand-500/10">
                     <p className="text-sm text-brand-700 dark:text-brand-300">
-                      {t('api.paidOnly')}
+                      {t(getBillingErrorKey(sync.error) ?? 'api.paidOnly')}
                     </p>
                     <Link
                       to="/billing"
                       className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-brand-500 px-3 text-sm font-semibold text-navy-900 shadow-sm transition-colors hover:bg-brand-400"
                     >
-                      <Sparkles className="size-4" /> {t('credits.upgradeCta')}
+                      <Sparkles className="size-4" /> {t('points.contactCta')}
                     </Link>
                   </div>
                 ) : (

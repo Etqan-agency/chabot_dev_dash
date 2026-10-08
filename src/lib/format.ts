@@ -7,6 +7,11 @@ export function fullNumber(n: number): string {
   return new Intl.NumberFormat('en').format(n)
 }
 
+/** Points with thousands separators — 1 decimal below 10, whole numbers above. */
+export function pointsNumber(n: number): string {
+  return new Intl.NumberFormat('en', { maximumFractionDigits: Math.abs(n) < 10 ? 1 : 0 }).format(n)
+}
+
 export function usd(n: number): string {
   return new Intl.NumberFormat('en', {
     style: 'currency',

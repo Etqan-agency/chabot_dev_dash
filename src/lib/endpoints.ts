@@ -4,7 +4,8 @@
  */
 import { getApiErrorStatus, http } from './api'
 import type {
-  AddCreditsRequest,
+  AddPointsRequest,
+  AddPointsResponse,
   ApiKey,
   AssignSubscriptionRequest,
   ChatbotConfig,
@@ -34,6 +35,8 @@ import type {
   Paginated,
   Plan,
   PlanInput,
+  PointsHistoryRow,
+  RenewSubscriptionRequest,
   Subscription,
   ApiIngestionRun,
   SyncApiContentRequest,
@@ -463,9 +466,18 @@ export const subscriptionsApi = {
   retrieve: (id: string) => http.get<Subscription>(`${V1}/subscriptions/${id}/`),
   assign: (body: AssignSubscriptionRequest) =>
     http.post<Subscription>(`${V1}/subscriptions/`, body),
-  /** Admin credit top-up for a tenant. */
-  addCredits: (body: AddCreditsRequest) =>
-    http.post(`${V1}/subscriptions/add-credits/`, body),
-  /** The caller's own plan + credit balance + usage limits. */
+  /** Admin manual points correction for a tenant (whole points). */
+  addPoints: (body: AddPointsRequest) =>
+    http.post<AddPointsResponse>(`${V1}/subscriptions/add-points/`, body),
+  /**
+   * Admin renewal: restarts the period now and resets points to the plan's.
+   * 409 `not_renewable` while it is still running with points left.
+   */
+  renew: (id: string, body: RenewSubscriptionRequest = {}) =>
+    http.post<Subscription>(`${V1}/subscriptions/${id}/renew/`, body),
+  /** The caller's own plan + points balance + usage limits. */
   mine: () => http.get<MySubscription>(`${V1}/my-subscription/`),
+  /** Points charges, newest first. Admin may pass `user=<id>`. */
+  pointsHistory: (params?: ListParams & { kind?: string; user?: string }) =>
+    http.get<Paginated<PointsHistoryRow>>(`${V1}/points-history/`, { params }),
 }

@@ -432,7 +432,7 @@ function ApiKeyCard() {
               to="/billing"
               className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-brand-500 px-3 text-sm font-semibold text-navy-900 shadow-sm transition-colors hover:bg-brand-400"
             >
-              <Sparkles className="size-4" /> {t('credits.upgradeCta')}
+              <Sparkles className="size-4" /> {t('points.contactCta')}
             </Link>
           </div>
         ) : isError ? (

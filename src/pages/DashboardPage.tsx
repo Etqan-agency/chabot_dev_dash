@@ -13,7 +13,7 @@ const ChatWidget = lazy(() =>
 )
 import { analyticsApi, subscriptionsApi } from '@/lib/endpoints'
 import { getApiErrorMessage } from '@/lib/api'
-import { fullNumber } from '@/lib/format'
+import { fullNumber, pointsNumber } from '@/lib/format'
 import { useAuth } from '@/hooks/useAuth'
 import { useI18n } from '@/hooks/useI18n'
 
@@ -44,7 +44,7 @@ export default function DashboardPage() {
         }
       />
 
-      <CreditsCard />
+      <PointsCard />
 
       {isLoading && (
         <div className="flex items-center justify-center py-24">
@@ -121,8 +121,8 @@ export default function DashboardPage() {
   )
 }
 
-/** Credit balance / "questions left" for the tenant (hidden if unavailable). */
-function CreditsCard() {
+/** Points balance vs the plan's allowance for the tenant (hidden if unavailable). */
+function PointsCard() {
   const { t } = useI18n()
   const { data } = useQuery({
     queryKey: ['my-subscription'],
@@ -130,55 +130,87 @@ function CreditsCard() {
     retry: false,
     staleTime: 60_000,
   })
-  if (!data?.credits) return null
-  const c = data.credits
+  if (!data?.points) return null
+  const p = data.points
   const planName = data.on_free_tier
-    ? t('credits.freeTier')
-    : (data.subscription?.plan?.name ?? t('credits.freeTier'))
-  // Exempt (admin/staff) accounts never spend credits — questions_left is null.
-  const unlimited = c.exempt || c.questions_left == null
-  const low = !unlimited && (c.questions_left ?? 0) <= 5
+    ? t('points.freeTier')
+    : (data.subscription?.plan?.name ?? t('points.freeTier'))
+  // Exempt (admin/staff) accounts are never charged points.
+  const unlimited = p.exempt
+  // Stopped until the admin renews: period over, or fewer than 1 point left.
+  const stopped = !unlimited && (p.exhausted || data.renewal_reason != null)
+  const low = !unlimited && !stopped && p.allowance > 0 && p.balance / p.allowance <= 0.1
+  const ratio = p.allowance > 0 ? Math.min(Math.max(p.balance / p.allowance, 0), 1) : 0
 
   return (
     <Card className="mb-6 p-5">
       <div className="flex flex-wrap items-center justify-between gap-4">
-        <div className="flex items-center gap-4">
+        <div className="flex min-w-0 flex-1 items-center gap-4">
           <span className="flex size-12 shrink-0 items-center justify-center rounded-xl bg-brand-100 text-brand-700 dark:bg-brand-500/15 dark:text-brand-300">
             <Coins className="size-6" />
           </span>
-          <div>
+          <div className="min-w-0 flex-1">
             <p className="text-sm font-medium text-muted">
-              {t('credits.title')} · {planName}
+              {t('points.title')} · {planName}
             </p>
             <p className="mt-0.5 text-2xl font-semibold tracking-tight text-fg">
               {unlimited
-                ? t('credits.unlimited')
-                : t('credits.questionsLeft', { n: fullNumber(c.questions_left ?? 0) })}
+                ? t('points.unlimited')
+                : t('points.ofAllowance', {
+                    n: pointsNumber(p.balance),
+                    total: fullNumber(p.allowance),
+                  })}
             </p>
-            <p className="text-xs text-muted">
-              {unlimited
-                ? t('credits.exemptNote')
-                : `${t('credits.balance', { n: fullNumber(c.balance) })} · ${t('credits.perQuestion', { n: c.credits_per_question })}`}
-            </p>
+            {unlimited ? (
+              <p className="text-xs text-muted">{t('points.exemptNote')}</p>
+            ) : (
+              <>
+                <div className="mt-1.5 h-1.5 max-w-xs overflow-hidden rounded-full bg-surface2">
+                  <div
+                    className={
+                      stopped || low
+                        ? 'h-full rounded-full bg-danger'
+                        : 'h-full rounded-full bg-success'
+                    }
+                    style={{ width: `${ratio * 100}%` }}
+                  />
+                </div>
+                <p className="mt-1 text-xs text-muted">
+                  {t('points.used', { n: pointsNumber(p.used) })}
+                </p>
+              </>
+            )}
           </div>
         </div>
         {!unlimited && (
-        <div className="flex items-center gap-3">
-          {low && (
-            <p className="flex items-center gap-2 rounded-lg border border-brand-300/40 bg-brand-50 px-3 py-2 text-sm text-brand-700 dark:bg-brand-500/10 dark:text-brand-300">
-              <Sparkles className="size-4 shrink-0" />
-              {t('credits.upgradeHint')}
+        <div className="flex flex-wrap items-center gap-3">
+          {(stopped || low) && (
+            <p
+              className={
+                stopped
+                  ? 'flex items-center gap-2 rounded-lg border border-danger/30 bg-danger/5 px-3 py-2 text-sm text-danger'
+                  : 'flex items-center gap-2 rounded-lg border border-brand-300/40 bg-brand-50 px-3 py-2 text-sm text-brand-700 dark:bg-brand-500/10 dark:text-brand-300'
+              }
+            >
+              {stopped ? (
+                <AlertTriangle className="size-4 shrink-0" />
+              ) : (
+                <Sparkles className="size-4 shrink-0" />
+              )}
+              {stopped
+                ? t(data.renewal_reason === 'expired' ? 'points.expired' : 'points.exhausted')
+                : t('points.lowHint')}
             </p>
           )}
           <Link
             to="/billing"
             className={
-              low
+              stopped || low
                 ? 'inline-flex h-8 items-center gap-1.5 rounded-lg bg-brand-500 px-3 text-sm font-semibold text-navy-900 shadow-sm transition-colors hover:bg-brand-400'
                 : 'inline-flex h-8 items-center gap-1.5 rounded-lg border border-border bg-surface px-3 text-sm font-medium text-fg transition-colors hover:bg-surface2'
             }
           >
-            <Sparkles className="size-4" /> {t('credits.upgradeCta')}
+            <Sparkles className="size-4" /> {t('points.contactCta')}
           </Link>
         </div>
         )}

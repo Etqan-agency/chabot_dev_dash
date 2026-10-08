@@ -151,7 +151,9 @@ admin can re-send via `POST /users/{id}/resend-activation/`.
   ],
   "prompt_tokens": 2503,
   "completion_tokens": 144,
-  "cost_usd": 0.007698
+  "cost_usd": 0.007698,
+  "points_used": 7.699,
+  "points_balance": 4870.551
 }
 ```
 
@@ -161,6 +163,8 @@ admin can re-send via `POST /users/{id}/resend-activation/`.
 | `confident` | `true` when a strong match was found; `false` = weaker/fallback answer. Optionally show a subtle "not sure" hint when false. |
 | `sources` | Which knowledge chunks were used. Optional to display (e.g. "Sources"). |
 | `prompt_tokens` / `completion_tokens` / `cost_usd` | Usage of this call (for your own metering/UI; safe to ignore). |
+| `points_used` | Points this answer took from the wallet (its real OpenAI cost × 1000; `0` for staff). See §7. |
+| `points_balance` | The wallet after this answer (`null` for staff). Update a points badge from it. |
 
 **Frontend flow for a chat UI:**
 1. Keep an array of `{role, content}` messages in state.
@@ -243,6 +247,10 @@ show `error_message`). Then `chunk_count` is the number of searchable pieces.
 > document's chunks from the original file, so it replaces any corrections made
 > either way.
 
+> **Points.** Upload, upload-word and reindex embed the text with OpenAI, charged
+> to the tenant's points (~1–2 points per 10 pages). With less than 1 point, or a
+> lapsed plan, they return **`402`** and nothing is stored (§7).
+
 > Limits per tenant: **100 documents / 200 MB / 20 MB per file** by default.
 > Over the limit returns **413** (see §10). **Free-tier** tenants are much
 > tighter — **1 document, ~0.5 MB** (one small file); see §7.
@@ -320,7 +328,8 @@ Stats: `items_stored`, `items_analyzed`, `analysis_errors`.
 
 > **Not on the free tier.** This endpoint returns **`402`** unless the tenant's
 > plan enables it (`allow_api_sync`). Free-tier users import knowledge only by
-> uploading a small file (§4). Show an upgrade CTA on `402`.
+> uploading a small file (§4). On `402` show the `detail` (not on the plan, or
+> out of points — every import is charged to the tenant's points, §7).
 
 ### 5a. Poll an import — `GET /sync-api-content/runs/<run_id>/`
 The other half of the `202`. Poll every few seconds until `done` is `true`.
@@ -378,7 +387,8 @@ pages whose content changed. Same-site only, honours `robots.txt`, and rejects
 private/internal URLs (**`400`**).
 
 > **Not on the free tier.** Same gate as §5 — returns **`402`** unless the plan
-> enables it (`allow_api_sync`). Show an upgrade CTA on `402`.
+> enables it (`allow_api_sync`), or when the tenant is out of points (the page
+> embeddings are charged to its points, §7). Show the `detail` on `402`.
 
 ---
 
@@ -405,7 +415,8 @@ GET  /tree-languages/            (?active=1 to filter)
 → [ { id, code, name, is_active,
       scope: "account" | "global",       # yours, or one an admin added for every tenant
       translated_nodes, total_nodes,     # progress: nodes in this language / in the canonical tree
-      translating } ]                    # true while a background translation is running
+      translating,                       # true while a background translation is running
+      paused } ]                         # true when untranslated nodes wait for points (§7)
 POST /tree-languages/            { "code": "en", "name": "English" }   → 201, translates the WHOLE tree into it
 DELETE /tree-languages/{code}/                                         → 204, removes it + its translated tree
 ```
@@ -438,6 +449,11 @@ Notes:
   (`POST`/`PATCH`/`DELETE /guided-tree/`, `retranslate`, `POST /tree-languages/`) returns **`402`** when the
   `guided_tree` feature is off for the tenant (see §11). Check `/my-features/` to
   show/hide the authoring UI.
+- **Points.** Translation is charged to the tenant's points (gpt-4o-mini, ~1 point
+  per language for a small tree). `POST /tree-languages/` and `retranslate` return
+  **`402`** with less than 1 point. If the points run out mid-translation the
+  remaining nodes keep the canonical text and the language shows `paused: true`;
+  it finishes by itself after the admin renews the plan.
 
 ---
 
@@ -525,6 +541,11 @@ merges into the existing metadata.
 `201` with the new row. `document` is required (which document it belongs to)
 and must be one of yours; it is appended at the end (`position`) and is
 searchable immediately.
+
+> **Points.** Teaching, fixing the wording (`PATCH` with new `content`), saving a
+> whole source (§5e) and resolving an unanswered question with an answer (§8)
+> re-embed the text — a fraction of a point each, charged to the tenant. With
+> less than 1 point (or a lapsed plan) they return **`402`** (§7).
 
 ### Forget — `DELETE /knowledge/{id}/` → `204`
 ```json
@@ -714,65 +735,71 @@ Returns the tenant's own rollups + live quota:
 ```
 Admins can pass `?scope=all` for a per-tenant breakdown.
 
-### Credits & plan — `GET /my-subscription/`
-Every chat question costs **credits** (default **2 credits/question**). A
-free-tier tenant gets **100 credits per month (= 50 questions/month)** — the
-balance is automatically topped back up to 100 at the start of each calendar
-month. When the balance can't cover a question, `POST /chat/` returns **`402`**
-— show an "upgrade or wait for next month" CTA.
+### Points & plan — `GET /my-subscription/`
+Everything that calls OpenAI is paid with **points**, at its **real cost**:
+**1 point = $0.001**. Typical costs:
+
+| Operation | Points |
+|---|---|
+| Chat answer (dashboard, API or WhatsApp) on gpt-4o | ~12 (gpt-4o-mini: < 1) |
+| Indexing a document (upload / reindex) | ~1–2 per 10 pages |
+| Knowledge edit / resolving an unanswered question | a fraction of a point |
+| Website crawl | ~10 per 50 pages |
+| API import | depends on the number of records |
+| Guided-tree translation | ~1 per language for a small tree |
+
+Each plan grants a fixed number of points per period (`plan.points`); a tenant
+with **no plan** gets **300 points per calendar month**. Points **never roll
+over** and can't be bought: an admin assigns the plan and renews it by hand
+(§11). With **less than 1 point** left, or once the plan's **period has ended**,
+every one of those operations returns **`402`** — show "out of points / plan
+expired — contact the administrator". Reading (lists, tree, analytics) still works.
 
 ```json
 {
-  "subscription": { ... } | null,
-  "on_free_tier": true,
-  "credits": { "balance": 96, "credits_per_question": 2, "exempt": false, "questions_left": 48 },
-  "usage": { "documents_used": 1, "documents_limit": 1, "storage_mb_limit": 0.5, ... }
+  "subscription": { ..., "points_balance": 4966.028, "points_allowance": 5000,
+                    "can_renew": false, "renewal_reason": null } | null,
+  "on_free_tier": false,
+  "points": { "balance": 4966.028, "allowance": 5000, "used": 33.972,
+              "exempt": false, "exhausted": false, "usd_per_point": 0.001 },
+  "renewal_reason": null,
+  "usage": { "documents_used": 1, "documents_limit": 100, "storage_mb_limit": 200, ... }
 }
 ```
 
-> `credits.exempt: true` means this user (admin/staff) never spends credits —
-> their usage is internal testing. `questions_left` is `null` then; show
-> "unlimited" instead of a counter.
-Read `credits.questions_left` to show "N questions left" and gate the UI before
-the user hits the `402`. Credits are granted by the plan (`included_credits`) or
-an admin top-up (`POST /subscriptions/add-credits/`, admin only).
+- `points.balance` / `points.allowance` → "4,966 / 5,000 points" with a progress bar.
+- `points.exhausted: true` → the account is stopped until the admin renews.
+- `renewal_reason` → `"expired"` | `"points_exhausted"` | `null`: show a banner
+  ("your plan has expired" / "you're out of points — contact the administrator").
+- `points.exempt: true` means this user (admin/staff) never spends points —
+  their usage is internal testing; show "unlimited" instead of a counter.
+- The old `credits` block (`questions_left`, `credits_per_question`) is gone.
 
-Enforcement is **strict and race-safe**: credits are atomically reserved
-*before* the answer is generated (parallel requests can never exceed the
-balance), and **auto-refunded** if the answer fails (a `503` never costs the
-user credits).
+Enforcement is **strict and race-safe**: a chat answer **holds** up to 20 points
+atomically *before* it is generated (parallel requests can never exceed the
+balance), then is **settled to its real cost** — or released in full if the
+answer fails (a `503` never costs anything).
+
+### Where the points went — `GET /points-history/`
+One row per metered operation, newest first (paginated; `?kind=` filters by
+`chat`, `document`, `knowledge`, `crawl`, `api_sync`, `translation`):
+```json
+{ "count": 6, "next": null, "previous": null, "results": [
+  { "id": "…", "kind": "chat", "model": "gpt-4o", "tokens_in": 3414, "tokens_out": 280,
+    "cost_usd": 0.011302, "points": 11.302, "created_at": "2026-10-08T15:55:22Z" } ] }
+```
+Admins can pass `?user=<id>`; a tenant asking for someone else gets `403`.
 
 **Free-tier limits** (a signup with no paid plan): **1 document, ~0.5 MB total**
 (one small Word file), and **no external-API import** (§5 returns `402`).
-Uploading a 2nd file or a larger one returns `413`. Paid plans lift these via
+Uploading a 2nd file or a larger one returns `413`. Plans lift these via
 their `max_documents` / `max_total_mb` / `allow_api_sync`.
 
-### Paying with Paddle (upgrade / buy credits)
-Payment runs through **Paddle Billing**. The **frontend** opens Paddle Checkout;
-the **backend** fulfills via a signed webhook — you never post payment data to
-this API.
-
-1. Each plan carries a `paddle_price_id` (from `GET /plans/`).
-2. On "Upgrade", open Paddle Checkout (Paddle.js) with that price and **pass the
-   logged-in user's id as `custom_data.user_id`** so the payment maps back:
-   ```js
-   Paddle.Checkout.open({
-     items: [{ priceId: plan.paddle_price_id, quantity: 1 }],
-     customer: { email: user.email },
-     customData: { user_id: user.id },   // REQUIRED for fulfillment
-   });
-   ```
-3. Paddle charges the customer, then calls our webhook
-   (`/api/v1/billing/paddle/webhook/`). On success the plan/credits are applied
-   server-side within seconds.
-4. After checkout closes, **re-fetch `GET /my-subscription/`** to show the new
-   balance/plan (fulfillment is async — poll once or twice if needed).
-
-You need the Paddle **client-side token** and **price ids** from the backend team
-(they live in the Paddle dashboard). Nothing else changes in your API calls.
-
-> Full payment setup, webhook events, testing, and go-live steps are in
-> **`PAYMENTS.md`** (backend/ops guide).
+### Billing is manual
+There is **no checkout**: the admin creates the plan, creates the user, assigns
+the plan and renews it (§11). An "Upgrade" or "Renew" action in a tenant UI
+should tell the user to contact the administrator. (The Paddle webhook still
+exists for a future self-serve checkout but is not used.)
 
 ---
 
@@ -916,8 +943,8 @@ a "regenerate" button in the user settings UI.
 
 > **Paid feature.** Free-tier users get **`402`** here, and `api_key` is `null`
 > in `GET /users/me/` and in the login response. Hide the API-key section for
-> them and show an upgrade CTA instead (check `credits`/plan via
-> `/my-subscription/`).
+> them and show a "not on your plan — contact the administrator" note instead
+> (check the plan via `/my-subscription/` and `GET /my-features/`).
 
 ---
 
@@ -929,9 +956,10 @@ Errors return JSON `{ "detail": "..." }` (or field errors for 400 validation).
 |--------|---------|-----------------|
 | `400` | Bad request / validation | Show the field message(s). |
 | `401` | Missing/expired token | Refresh token (§2) or send to login. |
-| `402` | Out of credits, or subscription expired | Show an **upgrade / top-up** CTA (see credits below). |
+| `402` | Out of points, plan expired, or a feature not on the plan | Show the `detail` and "contact the administrator" (§7). |
 | `403` | Tenant suspended / not allowed | Show "account suspended / no access". |
 | `404` | Not found — or not yours | Treat as not found; never reveal another tenant's data. |
+| `409` | Conflict (e.g. renewing a subscription that is still running with points left) | Show the `detail`. |
 | `413` | Document/storage quota exceeded | Tell the user to delete docs or upgrade. |
 | `429` | Rate limit or monthly token budget hit | Back off / show "try again shortly". |
 | `503` | RAG backend unavailable (LLM/provider) | Show "service busy, retry". |
@@ -1034,24 +1062,32 @@ paid feature — or revoke one — without changing their plan.
   `true`/`false` force it; **`null` clears** the override (inherit the default). Unknown keys are ignored.
   When a feature is off, its endpoint returns **`402`**.
 
-**Plans & billing (admin):**
-- `GET /plans/` — anyone authenticated can list active plans (for a pricing page).
-  Each plan includes a read-only `questions` (how many chat questions it sells) —
-  use that for the pricing display. Admin `POST` / `PATCH` / `DELETE /plans/`
-  manage them: just set `name`, `price_usd`, **`questions`**, `max_documents`,
-  `max_total_mb`, `is_active`, `allow_api_sync` (+ `paddle_price_id`) — credits
-  and the token cap are **auto-derived** from `questions`.
+**Plans & billing (admin) — billing is manual:** create the plan → create the
+user (`POST /users/`) → assign the plan → renew it when it ends or runs out.
+- `GET /plans/` — anyone authenticated can list active plans. Admin `POST` /
+  `PATCH` / `DELETE /plans/` manage them: set `name`, `price_usd`, **`points`**,
+  `max_documents`, `max_total_mb`, `llm_model`, `is_active`, `allow_api_sync`.
+  **Rule of thumb: `points = price_usd × 250`** (25% of the price goes to
+  OpenAI: a $20 plan → 5,000 points ≈ 410 gpt-4o answers). `monthly_questions` /
+  `monthly_token_cap` are optional extra caps (`0` = off). The old `questions` /
+  `included_credits` fields are gone.
 - `POST /subscriptions/` — assign/move a user to a plan (`{ user, plan, duration_days }`).
-  **Moving a user to a plan reloads their credit balance to that plan's allotment**
-  (a downgrade shrinks it, an upgrade grows it) — it does not stack onto the old
-  balance. Storage/document limits and features also follow the new plan
-  immediately (they're read live from the plan). A plan with no credit allotment
-  (`included_credits: 0`) leaves the existing balance untouched. Buying credits via
-  Paddle still **adds** to the balance (a purchase, not a plan change).
-- `POST /subscriptions/add-credits/` — top up a wallet (`{ user, amount }`).
-- `GET /subscriptions/` — list all subscriptions.
-- `POST /billing/paddle/webhook/` — **Paddle calls this, not you** (see §7). Public,
-  signature-verified; grants credits / sets the subscription on payment.
+  **The wallet is reset to the plan's `points`** (no rollover; a downgrade
+  shrinks it, an upgrade grows it). Storage/document limits and features follow
+  the new plan immediately. A plan with `points: 0` leaves the balance untouched.
+- `GET /subscriptions/` — list all subscriptions. Each row has `points_balance`,
+  `points_allowance`, **`can_renew`** and `renewal_reason` (`"expired"` |
+  `"points_exhausted"` | `null`).
+- `POST /subscriptions/{id}/renew/` — renew on the same plan (`{ duration_days? }`,
+  default = the previous period's length): a new period from now and the points
+  reset to the plan's. **Only when `can_renew` is true** — the period ended or
+  the points ran out; otherwise **`409`** `{"code": "not_renewable"}`. Show the
+  Renew button only on those rows.
+- `POST /subscriptions/add-points/` — add points to a wallet (`{ user, amount }`)
+  as a manual correction; returns `{ user, points_balance }`. Lost at the next
+  renewal (no rollover).
+- `GET /points-history/?user=<id>` — any tenant's points history (§7).
+- `POST /billing/paddle/webhook/` — not used while billing is manual.
 
 ---
 
