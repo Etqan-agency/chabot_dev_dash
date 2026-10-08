@@ -132,11 +132,9 @@ function CreditsCard() {
   })
   if (!data?.credits) return null
   const c = data.credits
-  const planName = data.quotas_paused
-    ? t('credits.unlimitedAccess')
-    : data.on_free_tier
-      ? t('credits.freeTier')
-      : (data.subscription?.plan?.name ?? t('credits.freeTier'))
+  const planName = data.on_free_tier
+    ? t('credits.freeTier')
+    : (data.subscription?.plan?.name ?? t('credits.freeTier'))
   // Exempt (admin/staff) accounts never spend credits — questions_left is null.
   const unlimited = c.exempt || c.questions_left == null
   const low = !unlimited && (c.questions_left ?? 0) <= 5

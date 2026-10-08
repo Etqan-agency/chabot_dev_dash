@@ -346,12 +346,6 @@ export interface MySubscription {
     is_current?: boolean
   } | null
   on_free_tier: boolean
-  /**
-   * Usage limits and credit charging are switched off server-side for every
-   * account (QUOTAS_PAUSED). Credits then read exempt and limits 0 / null;
-   * rate limits still apply. Absent on an API that predates the switch.
-   */
-  quotas_paused?: boolean
   credits: CreditInfo
   usage: SubscriptionUsage
 }
