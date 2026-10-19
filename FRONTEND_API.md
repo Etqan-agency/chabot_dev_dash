@@ -1089,6 +1089,21 @@ user (`POST /users/`) → assign the plan → renew it when it ends or runs out.
 - `GET /points-history/?user=<id>` — any tenant's points history (§7).
 - `POST /billing/paddle/webhook/` — not used while billing is manual.
 
+**WhatsApp:**
+- `GET/POST/PATCH/DELETE /whatsapp/accounts/` (admin) — link a tenant to its
+  WhatsApp Business number (`tenant`, `phone_number_id`, `access_token`,
+  `display_name`). Customer messages to that number are answered from that
+  tenant's knowledge (with the last turns of the conversation as context),
+  charged to its points, and replied to **from that number**. A message Meta
+  delivers twice is answered once.
+- `POST /whatsapp/send/` `{ to_number, message }` — sends from the **caller's own**
+  connected number (`400` when it has none). Admins may add `account` (an
+  accounts id) to send from a tenant's number; anyone else gets `403`. Meta only
+  delivers free-form text within 24 h of the customer's last message.
+- `GET /whatsapp/users/`, `/sessions/`, `/messages/` — read-only, scoped to the
+  caller's number. Each message appears once; a reply that couldn't be sent has
+  `status: "failed"` and an `error_message`.
+
 ---
 
 ## 12. Minimal client wrapper (copy-paste starter)
