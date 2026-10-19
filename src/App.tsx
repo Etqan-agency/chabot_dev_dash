@@ -2,9 +2,7 @@ import { lazy, Suspense } from 'react'
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { ProtectedRoute } from '@/components/ProtectedRoute'
 import { DashboardLayout } from '@/components/layout/DashboardLayout'
-import { ComingSoon } from '@/pages/ComingSoon'
 import { Spinner } from '@/components/ui/Spinner'
-import { useI18n } from '@/hooks/useI18n'
 import LoginPage from '@/pages/LoginPage'
 import RegisterPage from '@/pages/RegisterPage'
 import VerifyEmailPage from '@/pages/VerifyEmailPage'
@@ -23,6 +21,8 @@ import NotFoundPage from '@/pages/NotFoundPage'
 const ChatPage = lazy(() => import('@/pages/ChatPage'))
 // Billing (plan catalog + points history) — load on demand.
 const BillingPage = lazy(() => import('@/pages/BillingPage'))
+// WhatsApp (messages, contacts, sessions, number linking) — load on demand.
+const WhatsAppPage = lazy(() => import('@/pages/WhatsAppPage'))
 // Public marketing site — standalone page, loaded on demand.
 const MarketingPage = lazy(() => import('@/pages/MarketingPage'))
 // Admin panel — only ever reached by admins, load on demand.
@@ -40,11 +40,6 @@ function PageFallback() {
 }
 
 export default function App() {
-  const { t } = useI18n()
-  const soon = (key: string) => (
-    <ComingSoon title={t(`page.${key}.title`)} description={t(`page.${key}.desc`)} />
-  )
-
   return (
     <Routes>
       {/* Public marketing site (standalone — outside the dashboard shell) */}
@@ -79,7 +74,14 @@ export default function App() {
           <Route path="knowledge/chunks" element={<KnowledgeChunksPage />} />
           <Route path="knowledge/tree" element={<GuidedTreePage />} />
           <Route path="knowledge/gaps" element={<KnowledgeGapsPage />} />
-          <Route path="whatsapp" element={soon('whatsapp')} />
+          <Route
+            path="whatsapp"
+            element={
+              <Suspense fallback={<PageFallback />}>
+                <WhatsAppPage />
+              </Suspense>
+            }
+          />
           <Route
             path="billing"
             element={
