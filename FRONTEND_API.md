@@ -768,6 +768,8 @@ expired — contact the administrator". Reading (lists, tree, analytics) still w
 ```
 
 - `points.balance` / `points.allowance` → "4,966 / 5,000 points" with a progress bar.
+  `allowance` is this period's total: the plan's (or free tier's) points plus any
+  admin top-up, so `used = allowance - balance`.
 - `points.exhausted: true` → the account is stopped until the admin renews.
 - `renewal_reason` → `"expired"` | `"points_exhausted"` | `null`: show a banner
   ("your plan has expired" / "you're out of points — contact the administrator").
