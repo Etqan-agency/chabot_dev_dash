@@ -9,10 +9,12 @@ import { analyticsApi } from '@/lib/endpoints'
 import { getApiErrorMessage } from '@/lib/api'
 import { compactNumber, fullNumber, ms, percent, usd } from '@/lib/format'
 import { useI18n } from '@/hooks/useI18n'
+import { useAuth } from '@/hooks/useAuth'
 import type { UsageTotals } from '@/types/api'
 
 export default function AnalyticsPage() {
   const { t } = useI18n()
+  const { isAdmin } = useAuth()
   const { data, isLoading, isError, error, refetch, isFetching } = useQuery({
     queryKey: ['usage'],
     queryFn: analyticsApi.usage,
@@ -67,39 +69,41 @@ export default function AnalyticsPage() {
             </div>
           )}
 
-          {/* Usage breakdown by period */}
-          <Card className="overflow-hidden">
-            <CardHeader
-              title={t('analytics.section.usage')}
-              description={t('analytics.section.usageDesc')}
-            />
-            <div className="mt-4 overflow-x-auto">
-              <table className="w-full min-w-[560px] text-sm">
-                <thead>
-                  <tr className="border-y border-border text-xs uppercase tracking-wide text-muted">
-                    <th className="px-5 py-3 text-start font-semibold">{t('analytics.col.metric')}</th>
-                    <th className="px-5 py-3 text-end font-semibold">{t('analytics.period.allTime')}</th>
-                    <th className="px-5 py-3 text-end font-semibold">
-                      {t('analytics.period.thisMonth')}
-                    </th>
-                    <th className="px-5 py-3 text-end font-semibold">{t('analytics.period.today')}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {metrics.map((m) => (
-                    <tr key={m.label} className="border-b border-border/60 last:border-0">
-                      <td className="px-5 py-3 font-medium text-fg">{m.label}</td>
-                      <td className="px-5 py-3 text-end tabular-nums text-muted">{m.fmt(data.totals)}</td>
-                      <td className="px-5 py-3 text-end tabular-nums text-muted">
-                        {m.fmt(data.this_month)}
-                      </td>
-                      <td className="px-5 py-3 text-end tabular-nums text-muted">{m.fmt(data.today)}</td>
+          {/* Usage breakdown by period (admins only) */}
+          {isAdmin && (
+            <Card className="overflow-hidden">
+              <CardHeader
+                title={t('analytics.section.usage')}
+                description={t('analytics.section.usageDesc')}
+              />
+              <div className="mt-4 overflow-x-auto">
+                <table className="w-full min-w-[560px] text-sm">
+                  <thead>
+                    <tr className="border-y border-border text-xs uppercase tracking-wide text-muted">
+                      <th className="px-5 py-3 text-start font-semibold">{t('analytics.col.metric')}</th>
+                      <th className="px-5 py-3 text-end font-semibold">{t('analytics.period.allTime')}</th>
+                      <th className="px-5 py-3 text-end font-semibold">
+                        {t('analytics.period.thisMonth')}
+                      </th>
+                      <th className="px-5 py-3 text-end font-semibold">{t('analytics.period.today')}</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </Card>
+                  </thead>
+                  <tbody>
+                    {metrics.map((m) => (
+                      <tr key={m.label} className="border-b border-border/60 last:border-0">
+                        <td className="px-5 py-3 font-medium text-fg">{m.label}</td>
+                        <td className="px-5 py-3 text-end tabular-nums text-muted">{m.fmt(data.totals)}</td>
+                        <td className="px-5 py-3 text-end tabular-nums text-muted">
+                          {m.fmt(data.this_month)}
+                        </td>
+                        <td className="px-5 py-3 text-end tabular-nums text-muted">{m.fmt(data.today)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+          )}
 
           {/* Quota & limits */}
           <Card>

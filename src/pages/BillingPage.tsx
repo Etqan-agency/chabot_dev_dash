@@ -14,6 +14,7 @@ import { getApiErrorMessage } from '@/lib/api'
 import { formatDate, fullNumber, pointsNumber, usd } from '@/lib/format'
 import { cn } from '@/lib/cn'
 import { useI18n } from '@/hooks/useI18n'
+import { useAuth } from '@/hooks/useAuth'
 
 /** Operation kinds a points charge can belong to (filterable in the history). */
 const POINT_KINDS = ['chat', 'document', 'knowledge', 'crawl', 'api_sync', 'translation'] as const
@@ -25,6 +26,7 @@ const POINT_KINDS = ['chat', 'document', 'knowledge', 'crawl', 'api_sync', 'tran
  */
 export default function BillingPage() {
   const { t } = useI18n()
+  const { isAdmin } = useAuth()
 
   const mySub = useQuery({
     queryKey: ['my-subscription'],
@@ -244,7 +246,7 @@ export default function BillingPage() {
             )}
           </section>
 
-          <PointsHistory />
+          {isAdmin && <PointsHistory />}
         </div>
       )}
     </div>
