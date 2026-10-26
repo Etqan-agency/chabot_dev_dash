@@ -612,6 +612,37 @@ export interface WhatsAppAccount {
   updated_at?: ISODateString
 }
 
+/** The caller's own number (GET /whatsapp/connection/). */
+export interface WhatsAppConnectionAccount {
+  id: UUID
+  phone_number_id: string
+  display_phone_number: string
+  display_name: string
+  waba_id: string
+  connection: 'manual' | 'embedded_signup'
+  is_active: boolean
+  last_error: string
+  created_at?: ISODateString
+  updated_at?: ISODateString
+}
+
+export interface WhatsAppConnection {
+  connected: boolean
+  account: WhatsAppConnectionAccount | null
+  /** The plan includes WhatsApp. */
+  allowed: boolean
+  /** What Meta's Embedded Signup popup needs; `enabled: false` hides the button. */
+  signup: { enabled: boolean; app_id: string; config_id: string; graph_version: string }
+  /** Only on POST embedded-signup: a non-fatal Meta problem ("" = none). */
+  warning?: string
+}
+
+export interface EmbeddedSignupRequest {
+  code: string
+  waba_id: string
+  phone_number_id: string
+}
+
 export interface WhatsAppAccountInput {
   tenant: string
   phone_number_id: string

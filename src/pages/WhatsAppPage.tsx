@@ -32,6 +32,7 @@ import { Spinner } from '@/components/ui/Spinner'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { Modal } from '@/components/ui/Modal'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
+import { ConnectionCard } from '@/components/whatsapp/ConnectionCard'
 import { usersApi, whatsappApi } from '@/lib/endpoints'
 import { getApiErrorMessage } from '@/lib/api'
 import { formatDate } from '@/lib/format'
@@ -82,6 +83,8 @@ export default function WhatsAppPage() {
           </Button>
         }
       />
+
+      <ConnectionCard />
 
       {/* Tabs */}
       <div className="mb-4 flex flex-wrap gap-1.5">

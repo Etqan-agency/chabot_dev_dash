@@ -49,6 +49,8 @@ import type {
   User,
   WhatsAppAccount,
   WhatsAppAccountInput,
+  WhatsAppConnection,
+  EmbeddedSignupRequest,
   WhatsAppAnalyticsRow,
   WhatsAppContact,
   WhatsAppMessage,
@@ -429,6 +431,12 @@ export const unansweredApi = {
 export const whatsappApi = {
   send: (body: WhatsAppSendRequest) =>
     http.post<WhatsAppSendResponse>(`${V1}/whatsapp/send/`, body),
+
+  // The caller's own number (Embedded Signup)
+  connection: () => http.get<WhatsAppConnection>(`${V1}/whatsapp/connection/`),
+  embeddedSignup: (body: EmbeddedSignupRequest) =>
+    http.post<WhatsAppConnection>(`${V1}/whatsapp/connection/embedded-signup/`, body),
+  disconnect: () => http.post<WhatsAppConnection>(`${V1}/whatsapp/connection/disconnect/`),
 
   // Read-only data viewsets
   messages: (params?: ListParams) =>

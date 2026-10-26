@@ -1091,10 +1091,36 @@ user (`POST /users/`) → assign the plan → renew it when it ends or runs out.
 - `GET /points-history/?user=<id>` — any tenant's points history (§7).
 - `POST /billing/paddle/webhook/` — not used while billing is manual.
 
+**WhatsApp — a tenant connects its own number (Embedded Signup):**
+- `GET /whatsapp/connection/` — the caller's number and what the button needs:
+  ```json
+  { "connected": true, "allowed": true,
+    "account": { "id": "…", "phone_number_id": "800…", "display_phone_number": "+20 100 000 0000",
+                 "display_name": "Tea Shop", "waba_id": "900…", "connection": "embedded_signup",
+                 "is_active": true, "last_error": "" },
+    "signup": { "enabled": true, "app_id": "…", "config_id": "…", "graph_version": "v23.0" } }
+  ```
+  Show "Connect WhatsApp" only when `allowed && signup.enabled`. The button loads
+  the Facebook JS SDK, calls `FB.login({ config_id, response_type: "code",
+  override_default_response_type: true, extras: { setup: {}, featureType: "",
+  sessionInfoVersion: "3" } })` and listens for the `WA_EMBEDDED_SIGNUP`
+  `FINISH` postMessage (`waba_id`, `phone_number_id`).
+- `POST /whatsapp/connection/embedded-signup/` `{ code, waba_id, phone_number_id }`
+  — the server exchanges the code for the tenant's own token (stored encrypted),
+  checks the number is in that business account, subscribes the app and
+  registers the number. Returns the same shape as `GET`, plus `warning` (`""`,
+  or a Meta problem that didn't stop the connection, also kept in
+  `account.last_error`). Errors carry a `code`: `402 feature_disabled`,
+  `409 number_taken` (another account has it), `400 number_not_in_waba`,
+  `502 meta_error` / `meta_unreachable`, `503 not_configured`.
+- `POST /whatsapp/connection/disconnect/` — stop the bot on the number
+  (conversations are kept); `400 not_connected` when there is none.
+
 **WhatsApp:**
 - `GET/POST/PATCH/DELETE /whatsapp/accounts/` (admin) — link a tenant to its
   WhatsApp Business number (`tenant`, `phone_number_id`, `access_token`,
-  `display_name`). Customer messages to that number are answered from that
+  `display_name`; read-only `connection`, `waba_id`, `display_phone_number`,
+  `last_error`). Customer messages to that number are answered from that
   tenant's knowledge (with the last turns of the conversation as context),
   charged to its points, and replied to **from that number**. A message Meta
   delivers twice is answered once.
