@@ -23,6 +23,8 @@ const ChatPage = lazy(() => import('@/pages/ChatPage'))
 const BillingPage = lazy(() => import('@/pages/BillingPage'))
 // WhatsApp (messages, contacts, sessions, number linking) — load on demand.
 const WhatsAppPage = lazy(() => import('@/pages/WhatsAppPage'))
+// Orders from phone calls and WhatsApp — load on demand.
+const OrdersPage = lazy(() => import('@/pages/OrdersPage'))
 // Public marketing site — standalone page, loaded on demand.
 const MarketingPage = lazy(() => import('@/pages/MarketingPage'))
 // Admin panel — only ever reached by admins, load on demand.
@@ -60,6 +62,14 @@ export default function App() {
         <Route element={<DashboardLayout />}>
           <Route index element={<DashboardPage />} />
           <Route path="analytics" element={<AnalyticsPage />} />
+          <Route
+            path="orders"
+            element={
+              <Suspense fallback={<PageFallback />}>
+                <OrdersPage />
+              </Suspense>
+            }
+          />
           <Route
             path="chat"
             element={

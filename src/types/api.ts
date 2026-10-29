@@ -723,3 +723,41 @@ export interface ApiErrorBody {
   detail?: string
   [field: string]: string | string[] | undefined
 }
+
+// --- Orders (phone + WhatsApp ordering) ------------------------------------
+
+export type OrderStatus = 'new' | 'preparing' | 'delivered' | 'cancelled'
+export type OrderSource = 'voice' | 'whatsapp' | 'manual'
+export type OrderFulfilment = 'delivery' | 'pickup'
+
+export interface OrderItem {
+  id: number
+  menu_item: number | null
+  name: string
+  /** Decimal as string, e.g. "48.00" */
+  unit_price: string
+  quantity: number
+  notes: string
+  line_total: string
+}
+
+export interface Order {
+  id: string
+  /** Per-restaurant running number read out to the customer. */
+  number: number
+  status: OrderStatus
+  source: OrderSource
+  fulfilment: OrderFulfilment
+  customer_name: string
+  customer_phone: string
+  address: string
+  notes: string
+  subtotal: string
+  delivery_fee: string
+  total: string
+  currency: string
+  items: OrderItem[]
+  call_id: string | null
+  created_at: string
+  updated_at: string
+}

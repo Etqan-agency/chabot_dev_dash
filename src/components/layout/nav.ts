@@ -11,6 +11,7 @@ import {
   MessageCircle,
   Plug,
   Settings,
+  ShoppingBag,
   Users,
   Wallet,
   type LucideIcon,
@@ -38,6 +39,10 @@ export const navSections: NavSection[] = [
       { labelKey: 'nav.dashboard', to: '/', icon: LayoutDashboard, end: true },
       { labelKey: 'nav.analytics', to: '/analytics', icon: BarChart3 },
     ],
+  },
+  {
+    titleKey: 'nav.section.orders',
+    items: [{ labelKey: 'nav.orders', to: '/orders', icon: ShoppingBag }],
   },
   {
     titleKey: 'nav.section.assistant',

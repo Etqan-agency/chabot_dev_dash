@@ -31,6 +31,8 @@ import type {
   FullKnowledgeDocument,
   BulkKnowledgeStatus,
   ListParams,
+  Order,
+  OrderStatus,
   MySubscription,
   Paginated,
   Plan,
@@ -488,4 +490,12 @@ export const subscriptionsApi = {
   /** Points charges, newest first. Admin may pass `user=<id>`. */
   pointsHistory: (params?: ListParams & { kind?: string; user?: string }) =>
     http.get<Paginated<PointsHistoryRow>>(`${V1}/points-history/`, { params }),
+}
+
+export const ordersApi = {
+  list: (params?: ListParams) => http.get<Paginated<Order>>(`${V1}/voice/orders/`, { params }),
+  retrieve: (id: string) => http.get<Order>(`${V1}/voice/orders/${id}/`),
+  /** The dashboard may only move an order's status; everything else is fixed at placement. */
+  setStatus: (id: string, status: OrderStatus) =>
+    http.patch<Order>(`${V1}/voice/orders/${id}/`, { status }),
 }
